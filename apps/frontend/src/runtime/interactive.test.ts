@@ -3,6 +3,7 @@ import { BetMode, BetOutcome, RuntimeState, SettlementType } from '@gaming-platf
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDemoWallet } from '@/stores/demo-wallet';
+import { useGameStats } from '@/stores/game-stats';
 import { RuntimeErrorCode } from './errors';
 import { RuntimeEventName, type RuntimeEvent } from './event-bus';
 import { GameRuntime, type GameRegistration, type PlayerContext } from './game-runtime';
@@ -194,6 +195,52 @@ describe('interactive — guards', () => {
     const session = await rt.createSession({ gameId: 'mockcard' });
     await expect(rt.startInteractive({ ...cardBet(), sessionId: session.sessionId })).rejects.toBeTruthy();
     expect(useDemoWallet.getState().balance).toBe(10); // never debited
+  });
+});
+
+describe('interactive — raiseStake (Phase 3 double/war)', () => {
+  it('debits the increment and folds it into the round stake', async () => {
+    const rt = makeRuntime([0.4], 'card'); // start card 5
+    const { roundId } = await startCard(rt);
+    expect(useDemoWallet.getState().balance).toBe(900); // initial 100 debited
+    const { stake } = await rt.raiseStake({ roundId, amount: '100' });
+    expect(stake).toBe('200');
+    expect(useDemoWallet.getState().balance).toBe(800); // increment debited
+    // Standing at 5 loses; the loss now costs the raised 200 (net −200).
+    await rt.submitAction({ roundId, action: { type: 'stand' } });
+    expect(useDemoWallet.getState().balance).toBe(800);
+  });
+
+  it('rejects raising an unknown or finished round', async () => {
+    const rt = makeRuntime([0.4], 'card');
+    await expect(rt.raiseStake({ roundId: 'ghost', amount: '10' })).rejects.toMatchObject({
+      code: RuntimeErrorCode.ROUND_NOT_FOUND,
+    });
+    const { roundId } = await startCard(rt);
+    await rt.submitAction({ roundId, action: { type: 'stand' } }); // completes
+    await expect(rt.raiseStake({ roundId, amount: '10' })).rejects.toMatchObject({
+      code: RuntimeErrorCode.ROUND_ALREADY_SETTLED,
+    });
+  });
+});
+
+describe('per-round history identity (Phase 3 slots)', () => {
+  it('routes the ledger name + stats key from bet.metadata', async () => {
+    const rt = makeRuntime([0.05], 'slot'); // jackpot payout
+    const session = await rt.createSession({ gameId: 'mockslot' });
+    await rt.placeBet({
+      gameId: 'mockslot',
+      sessionId: session.sessionId,
+      stake: { amount: '100', currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: null }],
+      idempotencyKey: 'slot-meta',
+      metadata: { gameName: 'Fruit Slots', statsKey: 'fruit-slots' },
+    });
+    // Bet ledger records the per-round title, not the descriptor id.
+    expect(useDemoWallet.getState().bets[0].game).toBe('Fruit Slots');
+    // Stats are keyed by the per-round statsKey (catalog entry).
+    expect(useGameStats.getState().catalog['fruit-slots']).toBeDefined();
   });
 });
 

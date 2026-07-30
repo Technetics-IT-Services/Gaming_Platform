@@ -354,3 +354,57 @@ All Phase 2.3C changes are additive: optional contract fields (`IGameResult.sett
 `IBetResult.metadata`), optional engine methods, appended enum members, and new runtime methods.
 Crash, Dice, Roulette and Plinko are unchanged and verified by the existing suite (199 tests green,
 runtime coverage ≥ Phase 2.3A thresholds).
+
+## 15. Full runtime adoption (Phase 3)
+
+**Every wagering game now runs through the runtime.** All 12 use `IGameRuntime`, the game
+registry, an engine, `SessionManager`, `BetEngine`, the provider layer (settlement / history /
+provably-fair), the event bus and feature flags. No game touches the wallet, history, RNG,
+settlement or session directly.
+
+- **Single-shot reveals** (Crash, Dice, Roulette, Plinko, Dragon Tiger, Andar Bahar, Lucky 7,
+  Baccarat, Teen Patti) — a pure engine + `startRound` → animate → `cashOut`/`finishRound`.
+- **Interactive** (Blackjack, Casino War) — `startInteractive` → `submitAction` → `resolve`, with
+  the dealer/war reveal deferred to `AwaitingSystem` so settlement lands at the animation end.
+- **Slots** — a single `slots` engine with flexible settlement (Win / Jackpot + `metadata`),
+  serving the generic renderer for many titles.
+
+Two **minimal, generic, additive** runtime capabilities completed adoption (the only Phase 3
+runtime changes — no architecture/provider/contract/event/state-machine changes):
+
+1. **`raiseStake({ roundId, amount })`** — increases a live interactive round's committed stake,
+   debiting the increment through the wallet. The generic primitive behind a blackjack *double* or
+   a casino-war *go to war*; the runtime knows nothing about either.
+2. **Per-round history identity** — `bet.metadata.gameName` / `bet.metadata.statsKey` override the
+   ledger display name + stats key for that round (the generic slot renderer keys each title). A
+   settlement-aware XP guard awards none on Push/Refund (matching the legacy behaviour).
+
+### 15.1 Engine guide (single-shot)
+
+Write a pure `RuntimeGameEngine.createRound(input) → IGameResult`: derive the outcome from
+`rng.nextFloat(fairness)` (reuse `@/lib/deck` for cards), set `multiplier` (0 on a loss) and a
+`display: { label, value }` so history keeps the game's own label. Register `{ engine, descriptor }`
+in `src/games/registry.ts` with `rewards` for XP. The component calls `startRound` → animates the
+engine's `state` → settles via `cashOut` (win) / `finishRound` (loss).
+
+### 15.2 Interactive engine guide
+
+Implement `start` (deal → `AwaitingPlayer` + `availableActions`) and `step` (validate the action;
+draw/compute; return the next state). For a reveal that should settle at the animation end, return
+`AwaitingSystem` from the decision step and settle on a follow-up `resolve` action. Emit the terminal
+`settlement` (an `ISettlementResult`) on `Completed`. For a mid-round extra bet, the UI calls
+`raiseStake` before the action; the engine reads the (now-raised) `bet.stake` at settlement.
+
+### 15.3 Slot guide
+
+One `slots` engine handles every title: the UI passes `{ slug, jackpot }` as the selection pick and
+`{ gameName, statsKey }` as `bet.metadata`. The engine builds the reel strips from the slug, derives
+the stops from `rng.nextFloat`, and returns a flexible `ISettlementResult` (`Win`/`Jackpot` with an
+absolute payout + `metadata`). Reels animate to the engine's `targets`.
+
+### 15.4 Regression
+
+Gameplay, animations, payouts, history, XP, provably-fair and UI are preserved; the only intended
+change across the migrated games is that per-round *exact-seed replay* becomes "play/deal again"
+(the frozen runtime exposes reproduction via `getReplay`, not same-seed re-roll). 212 tests green;
+runtime coverage ≥ Phase 2.3A thresholds.
