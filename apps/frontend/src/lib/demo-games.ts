@@ -348,10 +348,21 @@ const CARD_PROTO: Record<string, string> = {
 export type CardProto =
   | 'teen-patti' | 'andar-bahar' | 'dragon-tiger' | 'baccarat' | 'blackjack' | 'casino-war' | 'lucky-7';
 
-/** Phase 4 instant games with a bespoke UI. Extend as each game's UI ships;
- * unmapped instant slugs fall through to the generic slot demo. */
-export type InstantProto = 'limbo';
-const INSTANT_PROTO: Record<string, InstantProto> = { limbo: 'limbo' };
+/** Phase 4/4B instant games with a bespoke UI. Unmapped instant slugs fall
+ * through to the generic slot demo. */
+export type InstantProto =
+  | 'limbo' | 'coin-flip' | 'wheel' | 'mines' | 'bomb-hunt' | 'tower' | 'keno' | 'bingo' | 'lucky-pick';
+const INSTANT_PROTO: Record<string, InstantProto> = {
+  limbo: 'limbo',
+  'coin-flip': 'coin-flip', 'coinflip': 'coin-flip',
+  wheel: 'wheel', 'lucky-wheel': 'wheel', 'wheel-of-fortune': 'wheel',
+  mines: 'mines', minesweeper: 'mines',
+  'bomb-hunt': 'bomb-hunt', bombs: 'bomb-hunt',
+  tower: 'tower', towers: 'tower', 'dragon-tower': 'tower',
+  keno: 'keno',
+  bingo: 'bingo',
+  'lucky-pick': 'lucky-pick', 'lucky-box': 'lucky-pick',
+};
 
 export type DemoExperience =
   | { kind: 'card'; game: CardProto }

@@ -37,9 +37,18 @@ const CARD_GAMES: Record<CardProto, ComponentType> = {
   'lucky-7': dynamic(() => import('@/components/games/prototype/cards/lucky-7').then((m) => m.Lucky7Game), { ssr: false, loading }),
 };
 
-/** Phase 4 instant games with a bespoke UI (registry-driven runtime; UI-only). */
+/** Phase 4/4B instant games with a bespoke UI (registry-driven runtime; UI-only).
+ * Each is lazy-loaded so a game only ships its bundle when played. */
 const INSTANT_GAMES: Record<InstantProto, ComponentType> = {
   limbo: dynamic(() => import('@/components/games/prototype/instant/limbo-game').then((m) => m.LimboGame), { ssr: false, loading }),
+  'coin-flip': dynamic(() => import('@/components/games/prototype/instant/coin-flip-game').then((m) => m.CoinFlipGame), { ssr: false, loading }),
+  wheel: dynamic(() => import('@/components/games/prototype/instant/wheel-game').then((m) => m.WheelGame), { ssr: false, loading }),
+  mines: dynamic(() => import('@/components/games/prototype/instant/grid-reveal-game').then((m) => m.MinesGame), { ssr: false, loading }),
+  'bomb-hunt': dynamic(() => import('@/components/games/prototype/instant/grid-reveal-game').then((m) => m.BombHuntGame), { ssr: false, loading }),
+  tower: dynamic(() => import('@/components/games/prototype/instant/tower-game').then((m) => m.TowerGame), { ssr: false, loading }),
+  keno: dynamic(() => import('@/components/games/prototype/instant/keno-game').then((m) => m.KenoGame), { ssr: false, loading }),
+  bingo: dynamic(() => import('@/components/games/prototype/instant/bingo-game').then((m) => m.BingoGame), { ssr: false, loading }),
+  'lucky-pick': dynamic(() => import('@/components/games/prototype/instant/lucky-pick-game').then((m) => m.LuckyPickGame), { ssr: false, loading }),
 };
 
 const CrashGame = dynamic(() => import('@/components/games/prototype/crash-game').then((m) => m.CrashGame), { ssr: false, loading });
