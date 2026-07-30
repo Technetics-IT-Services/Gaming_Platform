@@ -42,18 +42,18 @@
   },
   "devDependencies": {
     "@gaming-platform/config": "workspace:*",
-    "@playwright/test": "^1.49",
-    "@types/node": "^22.10.5",
+    "@playwright/test": "^1.62",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
     "@types/three": "^0.171.0",
-    "autoprefixer": "^10.4.20",
-    "eslint": "^9.17.0",
-    "eslint-config-next": "^15.1.4",
+    "autoprefixer": "^10.5.4",
+    "eslint": "^10.8.0",
+    "eslint-config-next": "^16.2.12",
     "globals": "^15.14.0",
-    "postcss": "^8.4.49",
+    "postcss": "^8.5.25",
     "rimraf": "^6.0.1",
-    "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.3"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }
