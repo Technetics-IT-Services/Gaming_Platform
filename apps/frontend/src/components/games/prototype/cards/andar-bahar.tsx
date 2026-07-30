@@ -6,65 +6,34 @@ import { RotateCcw, Spade, Sparkles, TrendingUp, Trophy } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
+
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { PlayingCard } from '@/components/card/playing-card';
-import { createDeck, rankOf, shuffle, type Card } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { AB_PAYOUT, type ABSide, type ABState } from '@/games/cards/andar-bahar-engine';
+import type { Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
 const SLUG = 'andar-bahar';
 
-type BetSide = 'andar' | 'bahar';
-// Slight house edge: Andar (first-dealt side) pays a touch less.
-const PAYOUT: Record<BetSide, number> = { andar: 1.9, bahar: 2.0 };
+type BetSide = ABSide;
+const PAYOUT = AB_PAYOUT;
 const CHIPS = [100, 500, 1000, 5000] as const;
 
-interface Outcome {
-  joker: Card;
-  andar: Card[];
-  bahar: Card[];
-  /** Full deal order: alternating starting with Andar. */
-  sequence: { side: BetSide; card: Card }[];
-  winner: BetSide;
-}
-
-function resolve(seed: number): Outcome {
-  const deck = shuffle(createDeck(1), seed);
-  let i = 0;
-  const joker = deck[i] ?? 'AS';
-  i += 1;
-  const jokerRank = rankOf(joker);
-
-  const andar: Card[] = [];
-  const bahar: Card[] = [];
-  const sequence: { side: BetSide; card: Card }[] = [];
-  let winner: BetSide = 'andar';
-  // Andar dealt first, then alternate.
-  let side: BetSide = 'andar';
-
-  while (i < deck.length) {
-    const card = deck[i]!;
-    i += 1;
-    if (side === 'andar') andar.push(card);
-    else bahar.push(card);
-    sequence.push({ side, card });
-    if (rankOf(card) === jokerRank) {
-      winner = side;
-      break;
-    }
-    side = side === 'andar' ? 'bahar' : 'andar';
-  }
-
-  return { joker, andar, bahar, sequence, winner };
-}
+type Outcome = ABState;
 
 type Phase = 'idle' | 'dealing' | 'result';
 
 const STEP_MS = 300;
 
 export function AndarBaharGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime(SLUG);
   const balance = useDemoWallet((s) => s.balance);
   const stat = useGameStat(SLUG);
 
@@ -77,10 +46,10 @@ export function AndarBaharGame() {
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
   const timers = useRef<number[]>([]);
-  const seedRef = useRef(1);
   const fxKeyRef = useRef(0);
   const stakeRef = useRef(0);
   const sideRef = useRef<BetSide>('andar');
+  const pendingRef = useRef(false);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -88,32 +57,25 @@ export function AndarBaharGame() {
   }, []);
   useEffect(() => clearTimers, [clearTimers]);
 
-  const finish = useCallback((o: Outcome) => {
-    const s = sideRef.current;
-    const stake = stakeRef.current;
-    const win = o.winner === s;
-    const multiplier = win ? PAYOUT[s] : 0;
-
-    const { net } = settleRound({
-      game: SLUG,
-      stake,
-      win,
-      multiplier,
-      label: `${o.winner === 'andar' ? 'Andar' : 'Bahar'} ${o.sequence.length}`,
-      value: win ? multiplier : 0,
-    });
-
-    setResult({ win, net });
-    if (win) {
-      fxKeyRef.current += 1;
-      setFx({ key: fxKeyRef.current, type: 'win', amount: net });
-    }
-    setPhase('result');
-  }, []);
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
+  const finish = useCallback(
+    (roundId: string, win: boolean, mult: number, stake: number) => {
+      const net = win ? Math.round(stake * mult) - stake : -stake;
+      setResult({ win, net });
+      if (win) {
+        fxKeyRef.current += 1;
+        setFx({ key: fxKeyRef.current, type: 'win', amount: net });
+      }
+      sound.play(win ? 'reward' : 'lose');
+      setPhase('result');
+      if (win) void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
+      else void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
+    },
+    [runtime],
+  );
 
   const run = useCallback(
-    (seed: number) => {
-      const o = resolve(seed);
+    (o: Outcome, roundId: string, win: boolean, mult: number, stake: number) => {
       setOutcome(o);
       setResult(null);
       setDealt(0);
@@ -128,32 +90,49 @@ export function AndarBaharGame() {
           }, k * STEP_MS),
         );
       }
-      timers.current.push(window.setTimeout(() => finish(o), n * STEP_MS + 400));
+      timers.current.push(window.setTimeout(() => finish(roundId, win, mult, stake), n * STEP_MS + 400));
     },
     [finish],
   );
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'dealing') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      clearTimers();
-      const seed =
-        replaySeed ?? ((Math.floor(performance.now() * 1000) ^ (stat.seq * 2654435761)) >>> 0);
-      seedRef.current = seed >>> 0;
-      stakeRef.current = stake;
-      sideRef.current = side;
+  const deal = useCallback(() => {
+    if (phase === 'dealing' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    clearTimers();
+    stakeRef.current = stake;
+    sideRef.current = side;
+    pendingRef.current = true;
 
-      useDemoWallet.getState().spend(stake);
-      sound.play('chips');
-      run(seedRef.current);
-    },
-    [phase, bet, balance, side, stat.seq, run, clearTimers],
-  );
+    const betReq: IBetRequest<ABSide> = {
+      gameId: SLUG,
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: side }],
+      idempotencyKey: `${SLUG}:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    sound.play('chips');
+    void runtime
+      .startRound<ABState>(betReq)
+      .then(({ result, roundId }) => {
+        run(result.state, roundId, result.win, result.multiplier, stake);
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, side, stat.seq, runtime, run, clearTimers]);
 
   // How many cards revealed on each side, based on the dealt sequence position.
   const shownSeq = outcome ? outcome.sequence.slice(0, dealt) : [];
@@ -331,8 +310,8 @@ export function AndarBaharGame() {
               <Button
                 variant="glass"
                 size="lg"
-                onClick={() => deal(seedRef.current)}
-                title="Replay same round"
+                onClick={() => deal()}
+                title="Deal again"
               >
                 <RotateCcw className="h-5 w-5" />
               </Button>

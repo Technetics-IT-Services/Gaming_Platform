@@ -6,46 +6,36 @@ import { ChevronsDown, ChevronsUp, RotateCcw, Sparkles, Trophy, Zap } from 'luci
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
+
 import { PlayingCard } from '@/components/card/playing-card';
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { AnimatedNumber } from '@/components/marketing/animated-number';
-import { createDeck, rankOf, shuffle, type Card } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { LUCKY7, type Lucky7Pick, type Lucky7State, pipValue } from '@/games/cards/lucky-7-engine';
+import type { Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
 const SLUG = 'lucky-7';
 const CHIPS = [100, 500, 1000, 5000];
 
-/** Bet options: Under 7 (2×), Lucky 7 (11×), Over 7 (2×). */
-type Pick = 'under' | 'seven' | 'over';
+/** Bet options: Under 7 (2×), Lucky 7 (11×), Over 7 (2×). Mult/label from the engine. */
+type Pick = Lucky7Pick;
 const PICKS: { id: Pick; label: string; hint: string; mult: number; icon: typeof ChevronsDown }[] = [
-  { id: 'under', label: 'Under 7', hint: '1 – 6', mult: 2, icon: ChevronsDown },
-  { id: 'seven', label: 'Lucky 7', hint: 'exactly 7', mult: 11, icon: Sparkles },
-  { id: 'over', label: 'Over 7', hint: '8 – 13', mult: 2, icon: ChevronsUp },
+  { id: 'under', label: LUCKY7.under.label, hint: '1 – 6', mult: LUCKY7.under.mult, icon: ChevronsDown },
+  { id: 'seven', label: LUCKY7.seven.label, hint: 'exactly 7', mult: LUCKY7.seven.mult, icon: Sparkles },
+  { id: 'over', label: LUCKY7.over.label, hint: '8 – 13', mult: LUCKY7.over.mult, icon: ChevronsUp },
 ];
 
 type Phase = 'idle' | 'dealing' | 'done';
 
-/** Pip number 1..13 (A=1, J=11, Q=12, K=13) — the value compared to 7. */
-function pipValue(card: Card): number {
-  const r = rankOf(card);
-  if (r === 'A') return 1;
-  if (r === 'K') return 13;
-  if (r === 'Q') return 12;
-  if (r === 'J') return 11;
-  if (r === 'T') return 10;
-  return Number(r);
-}
-
-function outcomeFor(pip: number): Pick {
-  if (pip < 7) return 'under';
-  if (pip === 7) return 'seven';
-  return 'over';
-}
-
 export function Lucky7Game() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime(SLUG);
   const balance = useDemoWallet((s) => s.balance);
   const stat = useGameStat(SLUG);
 
@@ -57,9 +47,9 @@ export function Lucky7Game() {
   const [result, setResult] = useState<{ win: boolean; net: number; pip: number; outcome: Pick } | null>(null);
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
-  const seedRef = useRef(1);
   const timers = useRef<number[]>([]);
   const fxKeyRef = useRef(0);
+  const pendingRef = useRef(false);
 
   const clearTimers = () => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -67,74 +57,77 @@ export function Lucky7Game() {
   };
   useEffect(() => clearTimers, []);
 
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
   const settle = useCallback(
-    (drawn: Card) => {
-      const pip = pipValue(drawn);
-      const outcome = outcomeFor(pip);
+    (roundId: string, win: boolean, mult: number, stake: number, pip: number, outcome: Pick) => {
       const chosen = PICKS.find((p) => p.id === pick)!;
-      const win = outcome === pick;
-      const stake = Math.max(1, Math.floor(bet));
-
-      const { net } = settleRound({
-        game: SLUG,
-        stake,
-        win,
-        multiplier: chosen.mult,
-        label: win ? `${pip} · ${chosen.label}` : `${pip} · miss`,
-        value: pip,
-      });
-
+      const net = win ? Math.round(stake * mult) - stake : -stake;
       setResult({ win, net, pip, outcome });
       setPhase('done');
+      sound.play(win ? 'reward' : 'lose');
       if (win) {
         fxKeyRef.current += 1;
         setFx({ key: fxKeyRef.current, type: 'win', amount: net });
         toast.success(`Card ${pip} — ${chosen.label} pays ${chosen.mult}× · +${net.toLocaleString('en-US')}`);
+        void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
       } else {
         toast.error(`Card ${pip} landed ${outcome === 'seven' ? 'on 7' : outcome}. Better luck next deal.`);
+        void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
       }
     },
-    [bet, pick],
+    [pick, runtime],
   );
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'dealing') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
+  const deal = useCallback(() => {
+    if (phase === 'dealing' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    clearTimers();
+    pendingRef.current = true;
 
-      const seed =
-        replaySeed ?? (Math.floor((performance.now() * 1000) % 2 ** 31) ^ (stat.seq * 2654435761)) >>> 0;
-      seedRef.current = seed >>> 0;
-
-      const deck = shuffle(createDeck(), seedRef.current);
-      const drawn = deck[0] ?? 'AS';
-
-      useDemoWallet.getState().spend(stake);
-      clearTimers();
-      setResult(null);
-      setRevealed(false);
-      setCard(drawn);
-      setPhase('dealing');
-      sound.play('cardFlip');
-
-      timers.current.push(
-        window.setTimeout(() => {
-          setRevealed(true);
-          sound.play('cardFlip');
-        }, 550),
-      );
-      timers.current.push(
-        window.setTimeout(() => {
-          settle(drawn);
-        }, 1050),
-      );
-    },
-    [phase, bet, balance, stat.seq, settle],
-  );
+    const betReq: IBetRequest<Lucky7Pick> = {
+      gameId: SLUG,
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick }],
+      idempotencyKey: `${SLUG}:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    void runtime
+      .startRound<Lucky7State>(betReq)
+      .then(({ result, roundId }) => {
+        setResult(null);
+        setRevealed(false);
+        setCard(result.state.card);
+        setPhase('dealing');
+        sound.play('cardFlip');
+        timers.current.push(
+          window.setTimeout(() => {
+            setRevealed(true);
+            sound.play('cardFlip');
+          }, 550),
+        );
+        timers.current.push(
+          window.setTimeout(() => {
+            settle(roundId, result.win, result.multiplier, stake, result.state.pip, result.state.outcome);
+          }, 1050),
+        );
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, pick, stat.seq, runtime, settle]);
 
   const dealing = phase === 'dealing';
   const pip = revealed && card ? pipValue(card) : null;
@@ -182,7 +175,7 @@ export function Lucky7Game() {
           <div className="flex min-h-[7rem] items-center justify-center">
             {card ? (
               <motion.div
-                key={`${seedRef.current}-${revealed}`}
+                key={`${card}-${revealed}`}
                 animate={result?.win ? { scale: [1, 1.12, 1] } : {}}
                 transition={{ duration: 0.5 }}
                 className={cn(
@@ -321,7 +314,7 @@ export function Lucky7Game() {
               <Sparkles className="h-5 w-5" /> Deal · {bet.toLocaleString('en-US')}
             </Button>
             {phase === 'done' ? (
-              <Button variant="glass" size="lg" onClick={() => deal(seedRef.current)} title="Replay same card">
+              <Button variant="glass" size="lg" onClick={() => deal()} title="Deal again">
                 <RotateCcw className="h-5 w-5" />
               </Button>
             ) : null}

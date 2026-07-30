@@ -16,7 +16,9 @@ import type { RuntimeGameEngine } from '@/runtime/engine-registry';
 import { CRASH_CONFIG, CrashEngine } from '@/runtime/engines/crash-engine';
 import type { GameRegistration } from '@/runtime/game-runtime';
 
+import { AndarBaharEngine } from './cards/andar-bahar-engine';
 import { DragonTigerEngine } from './cards/dragon-tiger-engine';
+import { Lucky7Engine } from './cards/lucky-7-engine';
 import { DiceEngine, DICE_CONFIG } from './dice-engine';
 import { RouletteEngine } from './roulette-engine';
 import { PlinkoEngine, PLINKO_CONFIG } from './plinko-engine';
@@ -137,6 +139,28 @@ export const GAME_MODULES: GameModule[] = [
       // Lowercase to preserve the exact legacy bet-ledger + stats key (was `game: SLUG`).
       name: 'dragon-tiger',
       engineKey: 'dragon-tiger',
+      category: 'card',
+      capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new AndarBaharEngine(),
+    descriptor: {
+      gameId: 'andar-bahar',
+      name: 'andar-bahar',
+      engineKey: 'andar-bahar',
+      category: 'card',
+      capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new Lucky7Engine(),
+    descriptor: {
+      gameId: 'lucky-7',
+      name: 'lucky-7',
+      engineKey: 'lucky-7',
       category: 'card',
       capabilities: REVEAL_CAPS,
       config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
