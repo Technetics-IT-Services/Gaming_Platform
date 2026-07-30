@@ -869,3 +869,79 @@ RBAC enforcement on every call; per-source audit permissions; cryptographically-
 (users/notes/correlation); masked directory fields (email); an authorization boundary
 (`enforce`) that audits allow **and** deny. **Not implemented (by design):** CRM, bonus engine,
 affiliate portal, and any Finance/Admin portal **UI** (this is the back-office **backend/API** layer).
+
+## 23. CRM, loyalty & marketing platform (Phase 6B)
+
+An enterprise player-engagement layer: `Player → CRM → Marketing → Operations APIs →
+Platform Services`. It **consumes** existing services read-only (via a `PlayerInsightPort` sourced
+from the Operations layer) and **never owns or moves money** — the bonus "wallet" is a LOGICAL
+construct. **Zero platform change**: nothing under runtime, games, wallet, ledger, treasury,
+payments, compliance, operations or settlement is modified. Module: `src/lib/crm/`
+(framework-agnostic TS).
+
+### 23.1 CRM architecture (STEP 1)
+
+`CRMService` is the RBAC-enforced facade owning player profiles, tags, preferences, lifecycle and
+communication history, composing seven engagement engines. Every public call carries an Operations
+`AuthContext`, is permission-checked **before** work, and is audited (allow AND deny). PII is masked
+on write (`maskContact`) — raw email/phone is never stored.
+
+### 23.2 Player segmentation (STEP 2)
+
+`SegmentationEngine` — a runtime registry of configurable `SegmentDefinition` predicates over a
+read-only `PlayerSnapshot`: VIP, High Value, New Player, Dormant, Active, At Risk, Self-Excluded,
+Responsible Gaming. Every threshold is a parameter (`defaultSegments(config)`); segments toggle/
+replace at runtime.
+
+### 23.3 Loyalty engine (STEP 3)
+
+`LoyaltyEngine` — logical points + XP + levels with earn, redeem, manual adjustment, point + level
+history, a reward catalog, tier progress and expiration hooks. Points are a **logical engagement
+currency**, never ledger money.
+
+### 23.4 VIP program (STEP 4)
+
+`VipService` — configurable levels + benefits with automatic upgrade/downgrade driven by lifetime
+loyalty points, manual promotion/demotion, and full VIP history. Benefits are descriptive; any
+monetary effect is applied elsewhere (Operations/Treasury), never here.
+
+### 23.5 Bonus engine (STEP 5)
+
+`BonusEngine` — a **logical** bonus wallet: welcome / deposit / cashback / free-spins / loss / manual
+bonuses with wagering requirements (× multiple per type), a validated status lifecycle (Pending →
+Active → Wagering → Completed, plus Cancelled/Expired/Forfeited), expiration sweep and a full audit
+trail. **No ledger changes** — amounts are logical units, never posted to the wallet; converting a
+completed bonus to cash is a deferred Operations/Treasury concern.
+
+### 23.6 Promotion engine (STEP 6)
+
+`PromotionEngine` — campaigns (segment + schedule gated), coupon/promo codes (max + per-player
+redemption limits), seasonal events, challenges + daily missions (progress + reset), leaderboard
+hooks and eligibility rules. Rewards are applied through the CRM's own engines, never via money.
+
+### 23.7 Notification framework (STEP 7)
+
+`NotificationService` — template-driven multi-channel messaging (email/SMS/push/in-app) behind an
+`INotificationProvider` abstraction, with `{{var}}` interpolation, per-player channel preferences
+(opt-out ⇒ suppressed), immediate + scheduled delivery, and a communication-history log. Only mock
+providers ship (`MockNotificationProvider`) — no real credentials.
+
+### 23.8 Referral program (STEP 8)
+
+`ReferralProgram` — stable referral codes + links, invites, signup attribution (self-referral +
+double-attribution guarded), a depth-bounded referral tree, configurable reward rules, status
+lifecycle (Invited → Signed → Qualified → Rewarded) and history, with future affiliate hooks. Reward
+amounts are logical and granted via loyalty/bonus — never money.
+
+### 23.9 Player timeline (STEP 9)
+
+`CRMService.getTimeline` merges a unified, newest-first stream: Operations-sourced deposits/
+withdrawals/support-notes/compliance-decisions (via `ops.players.timeline`) + bonuses + VIP changes
++ campaign redemptions + notifications.
+
+### 23.10 Security (STEP 10)
+
+Integrates with the Operations RBAC by reusing its `Role` + `AuthContext` (imported read-only —
+Operations is unmodified) and layering `CrmPermission`s on top. Deny-by-default; `enforce()` audits
+allow **and** deny; cryptographically-random secure ids; masked PII. **Not implemented (by design):**
+affiliate portal, BI dashboards.
