@@ -408,3 +408,43 @@ Gameplay, animations, payouts, history, XP, provably-fair and UI are preserved; 
 change across the migrated games is that per-round *exact-seed replay* becomes "play/deal again"
 (the frozen runtime exposes reproduction via `getReplay`, not same-seed re-roll). 212 tests green;
 runtime coverage ≥ Phase 2.3A thresholds.
+
+## 16. New instant games on the frozen runtime (Phase 4)
+
+Nine new games were added with **zero platform changes** — only `src/games/**` (engines +
+registry) plus UI. This proves the runtime is a true platform: a new game = a pure engine + a
+registry entry + a UI that calls the runtime.
+
+| Game | Type | Rules & payout | House edge |
+|---|---|---|---|
+| **Limbo** | single-shot | Pick a target; a crash-curve multiplier is generated; win pays the target if generated ≥ target. P(win)=edge/T. | ~1% |
+| **Coin Flip** | single-shot | Heads/tails; correct call pays 1.98× (fair 2× − 1%). | ~1% |
+| **Wheel** | single-shot | Pick a risk; land on a segment multiplier (0 = lose). Each risk set has mean ≈ 0.96. | ~4% |
+| **Mines** | interactive | 5×5 grid, N mines; reveal safe tiles to grow the multiplier; cash out any time. | ~1% |
+| **Bomb Hunt** | interactive | Same engine as Mines, 4×4 grid (a game = config). | ~1% |
+| **Tower** | interactive | Climb rows; pick a safe tile each row to climb; cash out any time. | ~1% |
+| **Keno** | single-shot | Pick ≤10 of 40; 10 drawn; pick×match paytable. | table |
+| **Bingo** | single-shot | 5×5 card, 10 drawn; pay by completed lines (of 12). | table |
+| **Lucky Pick** | single-shot | Pick 1 of 5 boxes; weighted multiplier tier (mean ≈ 0.96). | ~4% |
+
+### 16.1 Randomness
+
+Every game derives ALL randomness from the runtime's provably-fair provider — no `Math.random`,
+no local generators. Single-value games call `rng.nextFloat(fairness)`; multi-value games
+(Keno/Bingo/Mines/Tower) use `src/games/instant/rng.ts` (`floatAt`, `shuffleFair`), which vary the
+`clientSeed` by index so a round yields several reproducible floats from one commit. Interactive
+boards (mine/trap positions) are recomputed from fairness on every step and never sent to the
+client until the round ends — provably fair + tamper-evident.
+
+### 16.2 Adding a game (the whole checklist)
+
+1. **Engine** in `src/games/**` — a pure `RuntimeGameEngine`: `createRound` (single-shot) or
+   `start`/`step` (interactive), returning `multiplier`/`display` or a flexible `settlement`.
+2. **Registry** — one `GAME_MODULES` entry: `{ engine, descriptor }` with capabilities, limits,
+   `rewards`. (Reuse an engine across games via config — Mines + Bomb Hunt share `grid-reveal`.)
+3. **UI** — a component that calls `useGameRuntime(gameId)` + `startRound`/`cashOut`/`finishRound`
+   (single-shot) or `startInteractive`/`submitAction` (interactive) — **never a provider directly**
+   (reference: `LimboGame`). Route it in the play dispatcher (`demo-games.ts` + `demo-play.tsx`).
+
+No runtime, provider, contract, event, or state-machine change is required — verified: Phase 4
+touched zero files under `src/runtime/**` or `packages/types`.
