@@ -789,3 +789,83 @@ wire the parts directly. To go to production: swap each `Mock*Provider` for a re
 (implementing `IKYCProvider`/`IAMLProvider`/`IDeviceTrustProvider`/`IGeoProvider`), tune the policy
 config, and register a `FraudModel`. Nothing in the runtime, games, ledger, treasury accounting, or
 payment platform changes. **Not implemented (by design):** any Finance/Admin/Partner portal UI.
+
+## 22. Operations & administration platform (Phase 6A)
+
+An enterprise back-office layer for internal staff: `Player Platform → existing APIs → Operations
+API → Admin Services → existing platform services`. It **consumes** the frozen services (ledger/
+wallet, treasury/withdrawals, compliance) through **read-only ports** and exposes RBAC-gated
+administration. **Zero platform change**: nothing under `src/runtime/**`, games, ledger, treasury,
+payments, compliance, settlement, event bus or session manager is modified — operations is purely
+additive and never on a write/settlement path. Module: `src/lib/operations/` (framework-agnostic TS).
+
+### 22.1 Operations architecture (STEP 1)
+
+`OperationsService` is the single RBAC-enforced facade composing the sub-services: `PlayerService`,
+`AccountService`, `SupportService`, `SearchService`, `AuditViewerService`, `DashboardService`,
+`HealthService`, `ReportingService`. The frozen services are wrapped by thin `adapters.ts` factories
+(`walletReadPort`/`withdrawalReadPort`/`complianceReadPort`) that call only public **read** methods —
+the seam that lets operations consume without importing internals or reaching a mutation.
+
+### 22.2 RBAC model (STEP 2 & 9)
+
+`RBACService` resolves `Role → Permission` with **inheritance** (flattened + cached), **permission
+groups** (`PermissionGroups`) and optional **scoped** permissions. Seven roles — Super Admin,
+Operations Admin, Finance Admin, Support Admin, Compliance Admin, Read-Only Auditor, Support — each a
+composition of granular feature permissions. **Deny-by-default**: an unknown/empty role grants
+nothing. `assert()` is the enforcement primitive; `OperationsService.enforce()` wraps every call —
+permission-check **before** work, and an audit record on **both** allow and deny.
+
+### 22.3 Player management (STEP 3)
+
+`PlayerService.overview(id)` aggregates a read-only snapshot: account status, wallet summary
+(available/locked/vault), deposit summary (ledger `deposit` rows), withdrawal summary (pending/
+completed), risk summary (compliance decisions + flags) and support-note count. `timeline(id)`
+merges support notes + risk decisions + account changes (newest first). `SearchService` is a bounded
+player directory with substring match + cursor pagination.
+
+### 22.4 Account operations (STEP 4)
+
+`AccountService` owns operational account state — suspend / unsuspend / temporary lock (with expiry)
+/ unlock / responsible-gaming self-exclusion — each with reason + actor + timestamp. Expired
+temporary locks/exclusions auto-clear via `effectiveStatus`. This is operations-owned state; it never
+touches the wallet, ledger or gameplay (the player platform may *consult* it — a future wiring).
+
+### 22.5 Support tools (STEP 5)
+
+`SupportService` — internal/case notes + operator comments per player, with escalation tags,
+attachment reference hooks (ids only, never inlined), full-text search and a note-derived timeline
+slice.
+
+### 22.6 Audit viewer (STEP 6)
+
+`AuditViewerService` merges the three read-only streams — **financial** (withdrawal history),
+**compliance** (decision audit) and **operations** (action audit) — into one `UnifiedAuditRecord`
+view with filtering, search, cursor pagination, correlation-id lookup and export-ready rows.
+Per-source RBAC: reading a source requires its `audit.view.*` permission (a finance-only auditor
+cannot read the compliance stream).
+
+### 22.7 Dashboards (STEP 7)
+
+`DashboardService.overview()` aggregates player metrics (total/active/suspended/excluded), deposits,
+withdrawals (incl. the live pending queue), a risk-decision breakdown (holds/rejects/manual-reviews)
+and the sync system status.
+
+### 22.8 Reporting APIs (STEP 10)
+
+`ReportingService` emits export-ready `{ columns, rows }` reports — player, operational, finance,
+risk and compliance summaries — with a static `toCsv` serializer (RFC-4180-ish quoting). Pure reads.
+
+### 22.9 System health (STEP 8)
+
+`HealthService` reports per-component health: **ledger** (healthy iff `reconcile().balanced`),
+**treasury** (healthy iff its summary reconciles), **compliance**/**payments** reachability and a
+**runtime** frozen marker, plus pluggable async `HealthProbe`s (payment gateways, queues, cache) —
+the future-monitoring integration point. A failing probe degrades (or downs) the overall status.
+
+### 22.10 Operational security (STEP 9)
+
+RBAC enforcement on every call; per-source audit permissions; cryptographically-random secure ids
+(users/notes/correlation); masked directory fields (email); an authorization boundary
+(`enforce`) that audits allow **and** deny. **Not implemented (by design):** CRM, bonus engine,
+affiliate portal, and any Finance/Admin portal **UI** (this is the back-office **backend/API** layer).
