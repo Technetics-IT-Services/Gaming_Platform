@@ -1,6 +1,8 @@
 'use client';
 
 import { Badge, Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest, IStepResult } from '@gaming-platform/types';
+import { BetMode, RuntimeState, SettlementType } from '@gaming-platform/types';
 import { motion } from 'framer-motion';
 import { RotateCcw, Swords, Trophy, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -9,9 +11,10 @@ import { toast } from 'sonner';
 import { PlayingCard } from '@/components/card/playing-card';
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { AnimatedNumber } from '@/components/marketing/animated-number';
-import { createDeck, rankOf, rankValue, shuffle, type Card } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { type CWOutcome, type CWRound, type CasinoWarState } from '@/games/cards/casino-war-engine';
+import { rankOf, type Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
@@ -19,35 +22,14 @@ const SLUG = 'casino-war';
 const CHIPS = [100, 500, 1000, 5000];
 
 type Phase = 'idle' | 'dealing' | 'war' | 'done';
-type Outcome = 'player' | 'dealer' | 'tie';
-
-interface Round {
-  player: Card;
-  dealer: Card;
-  /** Second pair drawn only if the first is a tie and the player goes to war. */
-  warPlayer: Card;
-  warDealer: Card;
-}
-
-function buildRound(seed: number): Round {
-  const deck = shuffle(createDeck(), seed);
-  return {
-    player: deck[0] ?? 'AS',
-    dealer: deck[1] ?? 'KS',
-    warPlayer: deck[2] ?? 'QS',
-    warDealer: deck[3] ?? 'JS',
-  };
-}
-
-function compare(p: Card, d: Card): Outcome {
-  const pv = rankValue(p);
-  const dv = rankValue(d);
-  if (pv > dv) return 'player';
-  if (dv > pv) return 'dealer';
-  return 'tie';
-}
+type Outcome = CWOutcome;
+type Round = CWRound;
 
 export function CasinoWarGame() {
+  // The Runtime owns bet/RNG/settlement/history (incl. war doubling via raiseStake);
+  // the UI only renders + collects intent. Demo providers delegate to these same
+  // stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime(SLUG);
   const balance = useDemoWallet((s) => s.balance);
   const stat = useGameStat(SLUG);
 
@@ -61,10 +43,11 @@ export function CasinoWarGame() {
   );
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
-  const seedRef = useRef(1);
+  const roundIdRef = useRef<string | null>(null);
   const stakeRef = useRef(0); // committed stake (doubles on war)
   const timers = useRef<number[]>([]);
   const fxKeyRef = useRef(0);
+  const pendingRef = useRef(false);
 
   const clearTimers = () => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -72,107 +55,139 @@ export function CasinoWarGame() {
   };
   useEffect(() => clearTimers, []);
 
-  const settle = useCallback((outcome: Outcome, stake: number, wentToWar: boolean) => {
-    // War win pays even money on the doubled stake; a plain win pays 2×.
-    const win = outcome === 'player';
-    const { net } = settleRound({
-      game: SLUG,
-      stake,
-      win,
-      multiplier: 2,
-      label: win ? (wentToWar ? 'War won' : 'Battle won') : outcome === 'tie' ? 'Push→loss' : 'Dealer wins',
-      value: win ? 2 : 0,
-    });
+  /** Present a completed round (already settled by the runtime). */
+  const settleUi = useCallback((step: IStepResult<CasinoWarState>, wentToWar: boolean) => {
+    const s = step.settlement;
+    const win = s?.type === SettlementType.Win;
+    const outcome = step.gameState.outcome;
+    const net = win ? Number(s?.payout ?? 0) - stakeRef.current : -stakeRef.current;
     setResult({ outcome, net, win, wentToWar });
+    setRevealed(true);
     setPhase('done');
     if (win) {
       fxKeyRef.current += 1;
       setFx({ key: fxKeyRef.current, type: 'win', amount: net });
       toast.success(`${wentToWar ? 'War won!' : 'You win!'} +${net.toLocaleString('en-US')}`);
+      sound.play('reward');
     } else {
       toast.error(outcome === 'dealer' ? 'Dealer takes it.' : 'Surrendered the war.');
+      sound.play('lose');
     }
   }, []);
 
   const goToWar = useCallback(() => {
-    if (!round || phase !== 'war') return;
+    const roundId = roundIdRef.current;
+    if (!roundId || phase !== 'war') return;
     const extra = stakeRef.current; // double: match the original stake again
     if (extra > balance) {
       toast.error('Not enough demo coins to go to war — reload the balance pill.');
       return;
     }
-    useDemoWallet.getState().spend(extra);
-    stakeRef.current += extra;
-    setWar(true);
-    setRevealed(false);
-    setPhase('dealing');
-    sound.play('cardFlip');
-    sound.play('chips');
-    timers.current.push(
-      window.setTimeout(() => {
-        setRevealed(true);
+    // Runtime raises the committed stake, then the engine resolves the war pair.
+    void runtime
+      .raiseStake({ roundId, amount: String(extra) })
+      .then(() => {
+        stakeRef.current += extra;
+        setWar(true);
+        setRevealed(false);
+        setPhase('dealing');
         sound.play('cardFlip');
-      }, 500),
-    );
-    timers.current.push(
-      window.setTimeout(() => {
-        const outcome = compare(round.warPlayer, round.warDealer);
-        // On a second tie, dealer edge wins (standard casino war rule).
-        settle(outcome === 'player' ? 'player' : 'dealer', stakeRef.current, true);
-      }, 1000),
-    );
-  }, [round, phase, balance, settle]);
+        sound.play('chips');
+        return runtime.submitAction<CasinoWarState>({ roundId, action: { type: 'war' } });
+      })
+      .then(() => {
+        timers.current.push(
+          window.setTimeout(() => {
+            setRevealed(true);
+            sound.play('cardFlip');
+          }, 500),
+        );
+        timers.current.push(
+          window.setTimeout(() => {
+            void runtime
+              .submitAction<CasinoWarState>({ roundId, action: { type: 'resolve' } })
+              .then((step) => settleUi(step, true))
+              .catch(() => {});
+          }, 1000),
+        );
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not go to war.');
+      });
+  }, [phase, balance, runtime, settleUi]);
 
   const surrender = useCallback(() => {
-    if (phase !== 'war') return;
-    // Forfeit: lose the committed stake.
-    settle('dealer', stakeRef.current, false);
-  }, [phase, settle]);
+    const roundId = roundIdRef.current;
+    if (phase !== 'war' || !roundId) return;
+    void runtime
+      .submitAction<CasinoWarState>({ roundId, action: { type: 'surrender' } })
+      .then((step) => settleUi(step, false))
+      .catch(() => {});
+  }, [phase, runtime, settleUi]);
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'dealing' || phase === 'war') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      const seed =
-        replaySeed ?? (Math.floor((performance.now() * 1000) % 2 ** 31) ^ (stat.seq * 2654435761)) >>> 0;
-      seedRef.current = seed >>> 0;
-      const r = buildRound(seedRef.current);
+  const deal = useCallback(() => {
+    if (phase === 'dealing' || phase === 'war' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    clearTimers();
+    pendingRef.current = true;
 
-      useDemoWallet.getState().spend(stake);
-      stakeRef.current = stake;
-      clearTimers();
-      setRound(r);
-      setResult(null);
-      setWar(false);
-      setRevealed(false);
-      setPhase('dealing');
-      sound.play('cardFlip');
+    const betReq: IBetRequest = {
+      gameId: SLUG,
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: null }],
+      idempotencyKey: `${SLUG}:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    void runtime
+      .startInteractive<CasinoWarState>(betReq)
+      .then(({ roundId, step }) => {
+        roundIdRef.current = roundId;
+        stakeRef.current = stake;
+        setRound(step.gameState.round);
+        setResult(null);
+        setWar(false);
+        setRevealed(false);
+        setPhase('dealing');
+        sound.play('cardFlip');
 
-      timers.current.push(
-        window.setTimeout(() => {
-          setRevealed(true);
-          sound.play('cardFlip');
-        }, 550),
-      );
-      timers.current.push(
-        window.setTimeout(() => {
-          const outcome = compare(r.player, r.dealer);
-          if (outcome === 'tie') {
-            setPhase('war');
-            sound.play('notify');
-            toast.info('Tie! Go to war to double, or surrender.');
-          } else {
-            settle(outcome, stake, false);
-          }
-        }, 1050),
-      );
-    },
-    [phase, bet, balance, stat.seq, settle],
-  );
+        timers.current.push(
+          window.setTimeout(() => {
+            setRevealed(true);
+            sound.play('cardFlip');
+          }, 550),
+        );
+        timers.current.push(
+          window.setTimeout(() => {
+            if (step.state === RuntimeState.AwaitingPlayer) {
+              setPhase('war');
+              sound.play('notify');
+              toast.info('Tie! Go to war to double, or surrender.');
+            } else {
+              void runtime
+                .submitAction<CasinoWarState>({ roundId, action: { type: 'resolve' } })
+                .then((s2) => settleUi(s2, false))
+                .catch(() => {});
+            }
+          }, 1050),
+        );
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, stat.seq, runtime, settleUi]);
 
   const dealing = phase === 'dealing';
   const busy = phase === 'dealing' || phase === 'war';
@@ -324,7 +339,7 @@ export function CasinoWarGame() {
                 <Swords className="h-5 w-5" /> Battle · {bet.toLocaleString('en-US')}
               </Button>
               {phase === 'done' ? (
-                <Button variant="glass" size="lg" onClick={() => deal(seedRef.current)} title="Replay same round">
+                <Button variant="glass" size="lg" onClick={() => deal()} title="Deal again">
                   <RotateCcw className="h-5 w-5" />
                 </Button>
               ) : null}
