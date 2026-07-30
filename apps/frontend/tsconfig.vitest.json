@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vitest/globals"],
+    // Test ergonomics: tuple/array indexing in assertions (`calls[0][0]`,
+    // `items[0].stake`) is exhaustively guarded by the assertions themselves, so
+    // the app-wide `noUncheckedIndexedAccess` only adds noise here. App source is
+    // still checked strictly by the main `tsc --noEmit`.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["vitest.config.ts", "test/**/*.ts", "src/**/*.test.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", ".next", "out"]
+}

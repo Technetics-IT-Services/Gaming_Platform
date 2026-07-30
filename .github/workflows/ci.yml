@@ -47,6 +47,12 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Phase 2.3A — enforce the runtime coverage targets. Fails the pipeline if
+      # runtime/provider/engine coverage regresses below the thresholds pinned in
+      # apps/frontend/vitest.config.ts (lines/functions ≥90, branches ≥85).
+      - name: Runtime coverage gate
+        run: pnpm --filter @gaming-platform/frontend test:coverage
+
       - name: Build
         run: pnpm build
         env:
