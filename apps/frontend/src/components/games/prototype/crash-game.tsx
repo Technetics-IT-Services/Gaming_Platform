@@ -1,6 +1,8 @@
 'use client';
 
 import { Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
 import { motion } from 'framer-motion';
 import { Rocket, RotateCcw, TrendingUp, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -8,6 +10,8 @@ import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { sound } from '@/lib/sound';
+import type { CrashState } from '@/runtime';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStats } from '@/stores/game-stats';
 
@@ -18,29 +22,13 @@ interface Pt {
 }
 
 const GROWTH = 0.00019; // multiplier growth per ms
-const MAX_BUST = 120;
-
-/** mulberry32 seeded RNG → deterministic, replayable rounds. */
-function rng(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function bustFor(seed: number) {
-  const r = rng(seed)();
-  return Math.min(MAX_BUST, Math.max(1, Math.floor((0.99 / (1 - r)) * 100) / 100));
-}
 
 export function CrashGame() {
+  // The Runtime (Phase 2.2) owns bet/RNG/settlement/history; the UI only renders
+  // and collects intent. Demo providers delegate to these same stores, so balance
+  // + stats + history surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('crash');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
-  const credit = useDemoWallet((s) => s.credit);
-  const record = useGameStats((s) => s.record);
   const stat = useGameStats((s) => s.games.crash);
 
   const [phase, setPhase] = useState<Phase>('idle');
@@ -58,32 +46,33 @@ export function CrashGame() {
   const startRef = useRef(0);
   const bustRef = useRef(0);
   const cashedRef = useRef<number | null>(null);
-  const seedRef = useRef(1);
+  const roundIdRef = useRef<string | null>(null);
+  const settledRef = useRef(false);
+  const winPayoutRef = useRef(0);
   const lastSampleRef = useRef(0);
   const fxKeyRef = useRef(0);
 
   const cleanup = () => cancelAnimationFrame(raf.current);
   useEffect(() => cleanup, []);
 
-  const settle = useCallback(
-    (finalMult: number) => {
-      const cashed = cashedRef.current;
-      if (cashed) {
-        const payout = Math.round(bet * cashed);
-        credit(payout);
-        setResult({ win: true, payout });
-        fxKeyRef.current += 1;
-        setFx({ key: fxKeyRef.current, type: 'win', amount: payout - bet });
-        sound.play('reward');
-        record('crash', { label: `${cashed.toFixed(2)}×`, win: true, payout: payout - bet, value: cashed });
-        useDemoWallet.getState().recordBet({ game: 'Crash', stake: bet, win: true, net: payout - bet, multiplier: cashed });
-      } else {
-        setResult({ win: false, payout: -bet });
-        record('crash', { label: `${finalMult.toFixed(2)}×`, win: false, payout: -bet, value: finalMult });
-        useDemoWallet.getState().recordBet({ game: 'Crash', stake: bet, win: false, net: -bet, multiplier: 0 });
-      }
+  /** Cash out the live round through the Runtime (the win is settled + credited here). */
+  const doCashOut = useCallback(
+    (atMult: number) => {
+      if (settledRef.current || cashedRef.current !== null || !roundIdRef.current) return;
+      cashedRef.current = atMult;
+      settledRef.current = true;
+      setCashedAt(atMult);
+      sound.play('cashout');
+      void runtime
+        .cashOut({ roundId: roundIdRef.current, atMultiplier: atMult })
+        .then((res) => {
+          winPayoutRef.current = Number(res.payout);
+        })
+        .catch(() => {
+          winPayoutRef.current = Math.round(bet * atMult);
+        });
     },
-    [bet, credit, record],
+    [runtime, bet],
   );
 
   const tick = useCallback(() => {
@@ -93,9 +82,7 @@ export function CrashGame() {
 
     // auto cash-out
     if (cashedRef.current === null && typeof autoCashout === 'number' && autoCashout > 1 && m >= autoCashout && autoCashout < bust) {
-      cashedRef.current = autoCashout;
-      setCashedAt(autoCashout);
-      sound.play('cashout');
+      doCashOut(autoCashout);
       toast.success(`Auto cashed out at ${autoCashout.toFixed(2)}×`);
     }
 
@@ -105,7 +92,20 @@ export function CrashGame() {
       setShake(true);
       window.setTimeout(() => setShake(false), 500);
       sound.play('explosion');
-      settle(bust);
+      if (cashedRef.current !== null) {
+        // Win was settled + credited at cash-out; just present the result.
+        const payout = winPayoutRef.current || Math.round(bet * cashedRef.current);
+        setResult({ win: true, payout });
+        fxKeyRef.current += 1;
+        setFx({ key: fxKeyRef.current, type: 'win', amount: payout - bet });
+        sound.play('reward');
+      } else {
+        // Loss — settle through the Runtime (records history + stats).
+        setResult({ win: false, payout: -bet });
+        if (roundIdRef.current) {
+          void runtime.finishRound({ roundId: roundIdRef.current, finalMultiplier: bust }).catch(() => {});
+        }
+      }
       cleanup();
       return;
     }
@@ -116,7 +116,7 @@ export function CrashGame() {
       setPoints((p) => [...p, { t: elapsed, m }].slice(-260));
     }
     raf.current = requestAnimationFrame(tick);
-  }, [autoCashout, settle]);
+  }, [autoCashout, doCashOut, runtime, bet]);
 
   const beginRun = useCallback(() => {
     setPhase('running');
@@ -127,27 +127,45 @@ export function CrashGame() {
     raf.current = requestAnimationFrame(tick);
   }, [tick]);
 
-  const launch = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'running' || phase === 'countdown') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      const seed = replaySeed ?? Math.floor((performance.now() * 1000) % 2 ** 31) ^ (stat.seq * 2654435761);
-      seedRef.current = seed >>> 0;
-      bustRef.current = bustFor(seedRef.current);
-      cashedRef.current = null;
-      setCashedAt(null);
-      setResult(null);
-      setMult(1);
-      spend(stake);
-      setPhase('countdown');
-      setCountdown(3);
-    },
-    [phase, bet, balance, spend, stat.seq],
-  );
+  const launch = useCallback(() => {
+    if (phase === 'running' || phase === 'countdown') return;
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    const stake = Math.max(1, Math.floor(bet));
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    const betReq: IBetRequest<number> = {
+      gameId: 'crash',
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: typeof autoCashout === 'number' ? autoCashout : 0 }],
+      idempotencyKey: `crash:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    cashedRef.current = null;
+    settledRef.current = false;
+    winPayoutRef.current = 0;
+    setCashedAt(null);
+    setResult(null);
+    setMult(1);
+    // Runtime: validate → debit → engine (provably-fair bust). UI animates to it.
+    void runtime
+      .startRound<CrashState>(betReq)
+      .then(({ result, roundId }) => {
+        roundIdRef.current = roundId;
+        bustRef.current = result.state.crashPoint;
+        setPhase('countdown');
+        setCountdown(3);
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      });
+  }, [phase, bet, balance, session, runtime, autoCashout, stat.seq]);
 
   // countdown driver
   useEffect(() => {
@@ -163,9 +181,7 @@ export function CrashGame() {
 
   const cashOut = () => {
     if (phase !== 'running' || cashedRef.current !== null) return;
-    cashedRef.current = mult;
-    setCashedAt(mult);
-    sound.play('cashout');
+    doCashOut(mult);
     toast.success(`Cashed out at ${mult.toFixed(2)}×`);
   };
 
@@ -320,7 +336,7 @@ export function CrashGame() {
                 <Rocket className="h-5 w-5" /> Launch · {bet.toLocaleString('en-US')}
               </Button>
               {phase === 'crashed' ? (
-                <Button variant="glass" size="lg" onClick={() => launch(seedRef.current)} title="Replay same round">
+                <Button variant="glass" size="lg" onClick={() => launch()} title="Play again">
                   <RotateCcw className="h-5 w-5" />
                 </Button>
               ) : null}
