@@ -12,3 +12,6 @@ export * from './domain';
 export * from './auth';
 export * from './security';
 export * from './game';
+
+/** Platform contracts (Phase 2.1) — canonical runtime / wallet / betting / provider interfaces. */
+export * from './contracts';
