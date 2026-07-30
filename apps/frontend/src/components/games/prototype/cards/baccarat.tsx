@@ -6,88 +6,31 @@ import { Crown, RotateCcw, Sparkles, TrendingUp, Trophy, User } from 'lucide-rea
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
+
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { PlayingCard } from '@/components/card/playing-card';
-import { baccaratValue, createDeck, shuffle, type Card } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { BACCARAT_PAYOUT, type BaccaratSide, type BaccaratState } from '@/games/cards/baccarat-engine';
+import type { Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
 const SLUG = 'baccarat';
 
-type BetSide = 'player' | 'banker' | 'tie';
-type Winner = 'player' | 'banker' | 'tie';
-
-const PAYOUT: Record<BetSide, number> = { player: 2, banker: 1.95, tie: 9 };
-
-interface Outcome {
-  playerCards: Card[];
-  bankerCards: Card[];
-  playerTotal: number;
-  bankerTotal: number;
-  winner: Winner;
-}
-
+type BetSide = BaccaratSide;
+const PAYOUT = BACCARAT_PAYOUT;
+type Outcome = BaccaratState;
 const CHIPS = [100, 500, 1000, 5000] as const;
-
-/**
- * Resolve a full baccarat coup from a seed using simplified (but standard) rules:
- * naturals stand on 8/9; otherwise the third-card rule table is applied.
- */
-function resolve(seed: number): Outcome {
-  const shoe = shuffle(createDeck(6), seed);
-  let i = 0;
-  const draw = (): Card => {
-    const c = shoe[i] ?? 'AS';
-    i += 1;
-    return c;
-  };
-
-  const playerCards: Card[] = [draw(), draw()];
-  const bankerCards: Card[] = [draw(), draw()];
-
-  const pv = () => baccaratValue(playerCards);
-  const bv = () => baccaratValue(bankerCards);
-
-  const natural = pv() >= 8 || bv() >= 8;
-
-  if (!natural) {
-    let playerThird: number | null = null;
-    // Player rule: draws on 0-5, stands on 6-7.
-    if (pv() <= 5) {
-      const c = draw();
-      playerThird = baccaratValue([c]);
-      playerCards.push(c);
-    }
-
-    // Banker rule.
-    const b = bv();
-    let bankerDraws = false;
-    if (playerThird === null) {
-      bankerDraws = b <= 5;
-    } else {
-      if (b <= 2) bankerDraws = true;
-      else if (b === 3) bankerDraws = playerThird !== 8;
-      else if (b === 4) bankerDraws = playerThird >= 2 && playerThird <= 7;
-      else if (b === 5) bankerDraws = playerThird >= 4 && playerThird <= 7;
-      else if (b === 6) bankerDraws = playerThird === 6 || playerThird === 7;
-      else bankerDraws = false;
-    }
-    if (bankerDraws) bankerCards.push(draw());
-  }
-
-  const playerTotal = pv();
-  const bankerTotal = bv();
-  const winner: Winner =
-    playerTotal > bankerTotal ? 'player' : bankerTotal > playerTotal ? 'banker' : 'tie';
-
-  return { playerCards, bankerCards, playerTotal, bankerTotal, winner };
-}
 
 type Phase = 'idle' | 'dealing' | 'result';
 
 export function BaccaratGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime(SLUG);
   const balance = useDemoWallet((s) => s.balance);
   const stat = useGameStat(SLUG);
 
@@ -100,10 +43,10 @@ export function BaccaratGame() {
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
   const timers = useRef<number[]>([]);
-  const seedRef = useRef(1);
   const fxKeyRef = useRef(0);
   const stakeRef = useRef(0);
   const sideRef = useRef<BetSide>('player');
+  const pendingRef = useRef(false);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -111,38 +54,25 @@ export function BaccaratGame() {
   }, []);
   useEffect(() => clearTimers, [clearTimers]);
 
-  const finish = useCallback((o: Outcome) => {
-    const s = sideRef.current;
-    const stake = stakeRef.current;
-    const win = o.winner === s;
-    const multiplier = win ? PAYOUT[s] : 0;
-    const label =
-      o.winner === 'tie'
-        ? `Tie ${o.playerTotal}`
-        : `${o.winner === 'player' ? 'Player' : 'Banker'} ${
-            o.winner === 'player' ? o.playerTotal : o.bankerTotal
-          }`;
-
-    const { net } = settleRound({
-      game: SLUG,
-      stake,
-      win,
-      multiplier,
-      label,
-      value: win ? multiplier : 0,
-    });
-
-    setResult({ win, net });
-    if (win) {
-      fxKeyRef.current += 1;
-      setFx({ key: fxKeyRef.current, type: 'win', amount: net });
-    }
-    setPhase('result');
-  }, []);
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
+  const finish = useCallback(
+    (roundId: string, win: boolean, mult: number, stake: number) => {
+      const net = win ? Math.round(stake * mult) - stake : -stake;
+      setResult({ win, net });
+      if (win) {
+        fxKeyRef.current += 1;
+        setFx({ key: fxKeyRef.current, type: 'win', amount: net });
+      }
+      sound.play(win ? 'reward' : 'lose');
+      setPhase('result');
+      if (win) void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
+      else void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
+    },
+    [runtime],
+  );
 
   const run = useCallback(
-    (seed: number) => {
-      const o = resolve(seed);
+    (o: Outcome, roundId: string, win: boolean, mult: number, stake: number) => {
       setOutcome(o);
       setResult(null);
       setPhase('dealing');
@@ -156,33 +86,50 @@ export function BaccaratGame() {
         }, n * 420);
         timers.current.push(id);
       }
-      const doneId = window.setTimeout(() => finish(o), total * 420 + 350);
+      const doneId = window.setTimeout(() => finish(roundId, win, mult, stake), total * 420 + 350);
       timers.current.push(doneId);
     },
     [finish],
   );
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'dealing') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      clearTimers();
-      const seed =
-        replaySeed ?? ((Math.floor(performance.now() * 1000) ^ (stat.seq * 2654435761)) >>> 0);
-      seedRef.current = seed >>> 0;
-      stakeRef.current = stake;
-      sideRef.current = side;
+  const deal = useCallback(() => {
+    if (phase === 'dealing' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    clearTimers();
+    stakeRef.current = stake;
+    sideRef.current = side;
+    pendingRef.current = true;
 
-      useDemoWallet.getState().spend(stake);
-      sound.play('chips');
-      run(seedRef.current);
-    },
-    [phase, bet, balance, side, stat.seq, run, clearTimers],
-  );
+    const betReq: IBetRequest<BaccaratSide> = {
+      gameId: SLUG,
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: side }],
+      idempotencyKey: `${SLUG}:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    sound.play('chips');
+    void runtime
+      .startRound<BaccaratState>(betReq)
+      .then(({ result, roundId }) => {
+        run(result.state, roundId, result.win, result.multiplier, stake);
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, side, stat.seq, runtime, run, clearTimers]);
 
   const playerShown = outcome ? Math.min(outcome.playerCards.length, revealCount) : 0;
   const bankerShown = outcome
@@ -368,8 +315,8 @@ export function BaccaratGame() {
               <Button
                 variant="glass"
                 size="lg"
-                onClick={() => deal(seedRef.current)}
-                title="Replay same coup"
+                onClick={() => deal()}
+                title="Deal again"
               >
                 <RotateCcw className="h-5 w-5" />
               </Button>

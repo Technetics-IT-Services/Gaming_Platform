@@ -17,8 +17,10 @@ import { CRASH_CONFIG, CrashEngine } from '@/runtime/engines/crash-engine';
 import type { GameRegistration } from '@/runtime/game-runtime';
 
 import { AndarBaharEngine } from './cards/andar-bahar-engine';
+import { BaccaratEngine } from './cards/baccarat-engine';
 import { DragonTigerEngine } from './cards/dragon-tiger-engine';
 import { Lucky7Engine } from './cards/lucky-7-engine';
+import { TeenPattiEngine } from './cards/teen-patti-engine';
 import { DiceEngine, DICE_CONFIG } from './dice-engine';
 import { RouletteEngine } from './roulette-engine';
 import { PlinkoEngine, PLINKO_CONFIG } from './plinko-engine';
@@ -161,6 +163,28 @@ export const GAME_MODULES: GameModule[] = [
       gameId: 'lucky-7',
       name: 'lucky-7',
       engineKey: 'lucky-7',
+      category: 'card',
+      capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new BaccaratEngine(),
+    descriptor: {
+      gameId: 'baccarat',
+      name: 'baccarat',
+      engineKey: 'baccarat',
+      category: 'card',
+      capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new TeenPattiEngine(),
+    descriptor: {
+      gameId: 'teen-patti',
+      name: 'teen-patti',
+      engineKey: 'teen-patti',
       category: 'card',
       capabilities: REVEAL_CAPS,
       config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
