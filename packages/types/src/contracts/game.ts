@@ -73,6 +73,14 @@ export interface IGameResult<TState = unknown> {
   win: boolean;
   fairness?: IFairnessProof;
   computedAt: Timestamp;
+  /**
+   * Optional, engine-supplied presentation for history/stats surfaces. Games
+   * whose history label/value is not a plain multiplier (a dice roll, a roulette
+   * pocket, a card total) provide it here; the runtime forwards it verbatim and
+   * falls back to the multiplier when absent. Purely presentational — never
+   * affects settlement or payout.
+   */
+  display?: { label?: string; value?: number };
 }
 
 /**

@@ -4,6 +4,7 @@ import type { GameId, IBetResult, IGameHistoryProvider, PlayerId } from '@gaming
 
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStats } from '@/stores/game-stats';
+import { usePlayerProfile } from '@/stores/player-profile';
 import { RuntimeError, RuntimeErrorCode } from '../errors';
 
 /**
@@ -25,6 +26,8 @@ export type DemoHistoryRecord = IBetResult & {
   displayLabel?: string;
   /** Numeric value used for highest/streak stats (final multiplier). */
   displayValue?: number;
+  /** XP to award for this round (game-supplied via the descriptor's rewards). */
+  xp?: number;
 };
 
 export class DemoHistoryProvider implements IGameHistoryProvider {
@@ -47,6 +50,12 @@ export class DemoHistoryProvider implements IGameHistoryProvider {
       payout: net,
       value: entry.displayValue ?? entry.multiplier,
     });
+
+    // XP / progression (game-supplied) — mirrors the legacy `settleRound` award so
+    // migrated games keep leveling. Absent (e.g. crash), no XP is granted.
+    if (entry.xp && entry.xp > 0) {
+      usePlayerProfile.getState().addXp(entry.xp);
+    }
   }
 
   async list(input: { playerId: PlayerId; gameId?: GameId; limit?: number }): Promise<{

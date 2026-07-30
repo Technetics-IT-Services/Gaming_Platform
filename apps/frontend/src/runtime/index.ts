@@ -8,8 +8,9 @@
  * singleton (one configured instance) — not singleton abuse: the runtime is
  * stateless per call and holds only session bookkeeping.
  */
-import { CRASH_CONFIG, CrashEngine } from './engines/crash-engine';
-import { GameRuntime, type GameRegistration, type PlayerContext } from './game-runtime';
+import { GAME_MODULES } from '@/games/registry';
+
+import { GameRuntime, type PlayerContext } from './game-runtime';
 import { createProviderSet } from './providers';
 
 export * from './errors';
@@ -24,32 +25,20 @@ export type { ProviderSet } from './providers';
 /** Demo player context (single-player). The demo wallet is not keyed by player. */
 const DEMO_PLAYER: PlayerContext = { playerId: 'demo-player', currency: 'INR' };
 
-/** Reference game registration — descriptor + engine preset + bet limits. */
-const CRASH_GAME: GameRegistration = {
-  gameId: 'crash',
-  name: 'Crash',
-  engineKey: 'crash',
-  category: 'crash',
-  capabilities: {
-    cashOut: true,
-    autoBet: true,
-    multiBet: false,
-    provablyFair: true,
-    realtime: true,
-    multiplayer: false,
-    liveDealer: false,
-    tournament: false,
-  },
-  config: { ...CRASH_CONFIG, minBet: 1, maxBet: 1_000_000 },
-};
-
 let instance: GameRuntime | null = null;
 
+/**
+ * The single, lazily-constructed, demo-active runtime. Every hosted game is
+ * registered from the declarative `GAME_MODULES` registry (Phase 2.3B) — so
+ * adding a game is a registry change only, never a runtime change (STEP 8).
+ */
 export function getGameRuntime(): GameRuntime {
   if (!instance) {
     instance = new GameRuntime(createProviderSet(), DEMO_PLAYER);
-    instance.registerEngine(new CrashEngine());
-    instance.registerGame(CRASH_GAME);
+    for (const { engine, descriptor } of GAME_MODULES) {
+      instance.registerEngine(engine);
+      instance.registerGame(descriptor);
+    }
   }
   return instance;
 }

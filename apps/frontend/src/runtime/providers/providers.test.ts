@@ -1,9 +1,10 @@
 import type { IBetRequest, IGameResult, IGameSession, IWalletProvider } from '@gaming-platform/types';
 import { BetMode, BetOutcome, SessionStatus } from '@gaming-platform/types';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStats } from '@/stores/game-stats';
+import { usePlayerProfile } from '@/stores/player-profile';
 import { RuntimeError, RuntimeErrorCode } from '../errors';
 import { createProviderSet } from './index';
 import {
@@ -252,6 +253,26 @@ describe('history provider (demo)', () => {
     await history.record(record({ gameName: undefined, displayLabel: undefined, displayValue: undefined }));
     // gameName falls back to the gameId in the wallet ledger.
     expect(useDemoWallet.getState().bets[0].game).toBe('crash');
+  });
+
+  it('forwards a game-supplied non-multiplier label/value to the stats strip', async () => {
+    const history = new DemoHistoryProvider();
+    // A dice-style record: label is the roll, value is the roll (not a multiplier).
+    await history.record(record({ gameId: 'dice', displayLabel: '73.40', displayValue: 73.4 }));
+    const dice = useGameStats.getState().games.dice;
+    expect(dice.history[0].label).toBe('73.40');
+    expect(dice.history[0].value).toBe(73.4);
+  });
+
+  it('awards XP when the record carries a reward, and none when it does not', async () => {
+    const history = new DemoHistoryProvider();
+    const spy = vi.spyOn(usePlayerProfile.getState(), 'addXp');
+    await history.record(record({ xp: 40 }));
+    expect(spy).toHaveBeenCalledWith(40);
+    spy.mockClear();
+    await history.record(record({ xp: undefined }));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

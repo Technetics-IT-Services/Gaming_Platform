@@ -1,21 +1,23 @@
 'use client';
 
 import { Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
 import { motion } from 'framer-motion';
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
-import { seededRng } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { PLINKO_MULT, type PlinkoState } from '@/games/plinko-engine';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
 const ROWS = 12;
 const BINS = ROWS + 1;
-// Symmetric Plinko-style multipliers (edges high, center low).
-const MULT = [16, 8, 4, 2, 1.2, 0.7, 0.4, 0.7, 1.2, 2, 4, 8, 16];
+// Multiplier table lives in the shared Plinko engine (single source of truth).
+const MULT = PLINKO_MULT;
 const CHIPS = [100, 500, 1000, 5000];
 
 function binColor(m: number) {
@@ -26,8 +28,10 @@ function binColor(m: number) {
 }
 
 export function PlinkoGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('plinko');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
   const stat = useGameStat('plinko');
 
   const [bet, setBet] = useState(500);
@@ -47,61 +51,76 @@ export function PlinkoGame() {
   const drop = useCallback(() => {
     if (dropping) return;
     const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
     if (stake > balance) {
       toast.error('Not enough demo coins — reload from the balance pill.');
       return;
     }
     clear();
-    spend(stake);
     setDropping(true);
     setResult(null);
     setLandedBin(null);
 
-    const rng = seededRng(Math.floor(performance.now() * 1000) % 2 ** 31);
-    const dirs: number[] = [];
-    let rights = 0;
-    for (let i = 0; i < ROWS; i++) {
-      const right = rng() > 0.5 ? 1 : 0;
-      rights += right;
-      dirs.push(right ? 1 : -1);
-    }
-    const bin = rights;
-    const binCenterX = ((bin + 0.5) / BINS) * 100;
+    const betReq: IBetRequest = {
+      gameId: 'plinko',
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: null }],
+      idempotencyKey: `plinko:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
 
-    // animate down the pegs
-    let x = 50;
-    setBall({ x: 50, y: 3 });
-    const step = 90;
-    for (let i = 0; i < ROWS; i++) {
-      const dir = dirs[i]!;
-      x += dir * (44 / ROWS);
-      const y = 3 + ((i + 1) / ROWS) * 78;
-      timers.current.push(
-        window.setTimeout(() => {
-          setBall({ x, y });
-          sound.play('diceBounce');
-        }, step * (i + 1)),
-      );
-    }
-    // land in bin
-    timers.current.push(
-      window.setTimeout(
-        () => {
-          setBall({ x: binCenterX, y: 92 });
-          setLandedBin(bin);
-          const mult = MULT[bin] ?? 1;
-          const win = Math.round(stake * mult);
-          const isWin = mult >= 1;
-          fxKey.current += 1;
-          if (isWin) setFx({ key: fxKey.current, type: 'win', amount: win - stake });
-          settleRound({ game: 'plinko', stake, win: isWin, multiplier: mult, label: `${mult}×`, value: mult });
-          setResult({ mult, win });
-          setDropping(false);
-        },
-        step * (ROWS + 1),
-      ),
-    );
-  }, [dropping, bet, balance, spend]);
+    // Runtime: validate → debit → engine (provably-fair walk). UI drops the ball to it.
+    void runtime
+      .startRound<PlinkoState>(betReq)
+      .then(({ result, roundId }) => {
+        const { dirs, bin, mult } = result.state;
+        const win = result.win;
+        const binCenterX = ((bin + 0.5) / BINS) * 100;
+
+        // animate down the pegs (exact same path the engine walked)
+        let x = 50;
+        setBall({ x: 50, y: 3 });
+        const step = 90;
+        for (let i = 0; i < ROWS; i++) {
+          const dir = dirs[i]!;
+          x += dir * (44 / ROWS);
+          const y = 3 + ((i + 1) / ROWS) * 78;
+          timers.current.push(
+            window.setTimeout(() => {
+              setBall({ x, y });
+              sound.play('diceBounce');
+            }, step * (i + 1)),
+          );
+        }
+        // land in bin
+        timers.current.push(
+          window.setTimeout(
+            () => {
+              setBall({ x: binCenterX, y: 92 });
+              setLandedBin(bin);
+              const winAmt = Math.round(stake * mult);
+              fxKey.current += 1;
+              if (win) setFx({ key: fxKey.current, type: 'win', amount: winAmt - stake });
+              // Runtime settles: win → cashOut, loss → finish (credit + history + stats + XP).
+              if (win) void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
+              else void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
+              setResult({ mult, win: winAmt });
+              setDropping(false);
+            },
+            step * (ROWS + 1),
+          ),
+        );
+      })
+      .catch((e: unknown) => {
+        setDropping(false);
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      });
+  }, [dropping, bet, balance, session, stat.seq, runtime]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">

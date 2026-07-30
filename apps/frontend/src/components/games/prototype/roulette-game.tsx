@@ -1,13 +1,17 @@
 'use client';
 
 import { Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
 import { motion } from 'framer-motion';
 import { CircleDot, Flame, RotateCcw, Snowflake, Trophy, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
+import { OUTSIDE, colorOf, labelOf, type RoulettePick, type RouletteState } from '@/games/roulette-engine';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStats } from '@/stores/game-stats';
 
@@ -19,57 +23,24 @@ const WHEEL_ORDER = [
 const POCKETS = WHEEL_ORDER.length; // 37
 const SLICE = 360 / POCKETS;
 
-const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
-
 type Color = 'red' | 'black' | 'green';
-function colorOf(n: number): Color {
-  if (n === 0) return 'green';
-  return REDS.has(n) ? 'red' : 'black';
-}
-function labelOf(n: number): string {
-  const c = colorOf(n);
-  return `${n} ${c === 'green' ? 'Green' : c === 'red' ? 'Red' : 'Black'}`;
-}
 function chipClass(c: Color): string {
   return c === 'green' ? 'bg-emerald text-white' : c === 'red' ? 'bg-destructive text-white' : 'bg-foreground text-white';
 }
 
-/** Outside bet types (all pay 2×). */
-type OutsideKey = 'red' | 'black' | 'even' | 'odd' | 'low' | 'high';
-const OUTSIDE: { key: OutsideKey; label: string; hit: (n: number) => boolean }[] = [
-  { key: 'red', label: 'Red', hit: (n) => colorOf(n) === 'red' },
-  { key: 'black', label: 'Black', hit: (n) => colorOf(n) === 'black' },
-  { key: 'even', label: 'Even', hit: (n) => n !== 0 && n % 2 === 0 },
-  { key: 'odd', label: 'Odd', hit: (n) => n % 2 === 1 },
-  { key: 'low', label: '1–18', hit: (n) => n >= 1 && n <= 18 },
-  { key: 'high', label: '19–36', hit: (n) => n >= 19 && n <= 36 },
-];
-
-type BetSelection = { kind: 'outside'; key: OutsideKey } | { kind: 'straight'; n: number };
-
-/** mulberry32 seeded RNG → deterministic, replayable spins. */
-function rng(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function numberFor(seed: number): number {
-  return Math.floor(rng(seed)() * POCKETS); // 0..36
-}
+/** A player's selection — outside bet (2×) or a straight number (36×). The wheel
+ * rules (colour, label, outside predicates) live in the shared roulette engine. */
+type BetSelection = RoulettePick;
 
 const QUICK_CHIPS = [100, 500, 1000, 5000];
 const SPIN_MS = 3100;
 
 export function RouletteGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so balance/stats/history
+  // surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('roulette');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
-  const credit = useDemoWallet((s) => s.credit);
-  const record = useGameStats((s) => s.record);
   const stat = useGameStats((s) => s.games.roulette);
 
   const [bet, setBet] = useState(100);
@@ -87,7 +58,6 @@ export function RouletteGame() {
   const startRef = useRef(0);
   const fromRotRef = useRef(0);
   const toRotRef = useRef(0);
-  const seedRef = useRef(1);
   const fxKeyRef = useRef(0);
 
   const cleanup = useCallback(() => {
@@ -97,31 +67,25 @@ export function RouletteGame() {
   }, []);
   useEffect(() => cleanup, [cleanup]);
 
-  const multiplier = selection.kind === 'straight' ? 36 : 2;
-
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
   const settle = useCallback(
-    (n: number) => {
-      const sel = selection;
-      const won = sel.kind === 'straight' ? sel.n === n : OUTSIDE.find((o) => o.key === sel.key)!.hit(n);
-      const stake = Math.max(1, Math.floor(bet));
+    (n: number, won: boolean, mult: number, stake: number, roundId: string) => {
       if (won) {
-        const gross = Math.round(stake * multiplier);
+        const gross = Math.round(stake * mult);
         const net = gross - stake;
-        credit(gross);
         setResult({ win: true, payout: net, number: n });
         fxKeyRef.current += 1;
         setFx({ key: fxKeyRef.current, type: 'win', amount: net });
         sound.play('reward');
-        record('roulette', { label: labelOf(n), win: true, payout: net, value: n });
-        useDemoWallet.getState().recordBet({ game: 'Roulette', stake, win: true, net, multiplier });
+        // Runtime settles the win: credit + bet-history + stats (label = the pocket).
+        void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
       } else {
         setResult({ win: false, payout: -stake, number: n });
         sound.play('lose');
-        record('roulette', { label: labelOf(n), win: false, payout: -stake, value: n });
-        useDemoWallet.getState().recordBet({ game: 'Roulette', stake, win: false, net: -stake, multiplier: 0 });
+        void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
       }
     },
-    [selection, bet, multiplier, credit, record],
+    [runtime],
   );
 
   const tick = useCallback(() => {
@@ -138,56 +102,74 @@ export function RouletteGame() {
     }
   }, []);
 
-  const spin = useCallback(
-    (replaySeed?: number) => {
-      if (spinning) return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      const seed =
-        replaySeed ?? ((Math.floor((performance.now() * 1000) % 2 ** 31) ^ (stat.seq * 2654435761)) >>> 0);
-      seedRef.current = seed >>> 0;
-      const n = numberFor(seedRef.current);
+  const spin = useCallback(() => {
+    if (spinning) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    const betReq: IBetRequest<RoulettePick> = {
+      gameId: 'roulette',
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: selection }],
+      idempotencyKey: `roulette:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    setResult(null);
+    setWinning(null);
+    setSpinning(true);
+    setBallSettled(false);
+    sound.play('chips');
+    sound.play('wheel');
 
-      spend(stake);
-      setResult(null);
-      setWinning(null);
-      setSpinning(true);
-      setBallSettled(false);
-      sound.play('chips');
-      sound.play('wheel');
+    // Runtime: validate → debit → engine (provably-fair pocket). UI spins to it.
+    void runtime
+      .startRound<RouletteState>(betReq)
+      .then(({ result, roundId }) => {
+        const n = result.state.number;
+        const won = result.win;
+        const mult = result.multiplier;
 
-      // Compute target rotation so pocket `n` lands under the top marker.
-      const idx = WHEEL_ORDER.indexOf(n as (typeof WHEEL_ORDER)[number]);
-      const pocketAngle = idx * SLICE; // pocket's base angle from top (clockwise)
-      // rotate so pocketAngle ends at 0 (top): rotation ≡ -pocketAngle (mod 360)
-      const current = ((rotation % 360) + 360) % 360;
-      const targetMod = (360 - pocketAngle) % 360;
-      let delta = targetMod - current;
-      if (delta < 0) delta += 360;
-      const spins = 6; // full turns for drama
-      fromRotRef.current = rotation;
-      toRotRef.current = rotation + spins * 360 + delta;
+        // Compute target rotation so pocket `n` lands under the top marker.
+        const idx = WHEEL_ORDER.indexOf(n as (typeof WHEEL_ORDER)[number]);
+        const pocketAngle = idx * SLICE; // pocket's base angle from top (clockwise)
+        // rotate so pocketAngle ends at 0 (top): rotation ≡ -pocketAngle (mod 360)
+        const current = ((rotation % 360) + 360) % 360;
+        const targetMod = (360 - pocketAngle) % 360;
+        let delta = targetMod - current;
+        if (delta < 0) delta += 360;
+        const spins = 6; // full turns for drama
+        fromRotRef.current = rotation;
+        toRotRef.current = rotation + spins * 360 + delta;
 
-      startRef.current = performance.now();
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(tick);
+        startRef.current = performance.now();
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(tick);
 
-      // ball settle sound near the end
-      timeoutRef.current.push(
-        window.setTimeout(() => sound.play('ball'), SPIN_MS - 500),
-        window.setTimeout(() => {
-          setBallSettled(true);
-          setSpinning(false);
-          setWinning(n);
-          settle(n);
-        }, SPIN_MS + 60),
-      );
-    },
-    [spinning, bet, balance, spend, stat.seq, rotation, tick, settle],
-  );
+        // ball settle sound near the end
+        timeoutRef.current.push(
+          window.setTimeout(() => sound.play('ball'), SPIN_MS - 500),
+          window.setTimeout(() => {
+            setBallSettled(true);
+            setSpinning(false);
+            setWinning(n);
+            settle(n, won, mult, stake, roundId);
+          }, SPIN_MS + 60),
+        );
+      })
+      .catch((e: unknown) => {
+        setSpinning(false);
+        setBallSettled(true);
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      });
+  }, [spinning, bet, balance, session, selection, stat.seq, rotation, tick, settle, runtime]);
 
   // Hot / Cold from history (fallback to seeded so never empty).
   const { hot, cold, redPct, oddPct } = useMemo(() => {
@@ -447,7 +429,7 @@ export function RouletteGame() {
               <CircleDot className="h-5 w-5" /> {spinning ? 'Spinning…' : `Spin · ${bet.toLocaleString('en-US')}`}
             </Button>
             {result && !spinning ? (
-              <Button variant="glass" size="lg" onClick={() => spin(seedRef.current)} title="Replay same spin">
+              <Button variant="glass" size="lg" onClick={() => spin()} title="Spin again">
                 <RotateCcw className="h-5 w-5" />
               </Button>
             ) : null}

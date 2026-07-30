@@ -1,25 +1,29 @@
 'use client';
 
 import { Badge, Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
 import { motion } from 'framer-motion';
 import { Dice5, Percent, RotateCcw, Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
+import { diceChance, diceMultiplier, type DicePick, type DiceState } from '@/games/dice-engine';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStats } from '@/stores/game-stats';
 
 type Direction = 'over' | 'under';
 
-const HOUSE_EDGE = 0.99; // ~1% house edge
 const MIN_TARGET = 2;
 const MAX_TARGET = 98;
 const ROLL_MS = 900;
 
-/** mulberry32 seeded RNG → deterministic, replayable rounds. */
-function rng(seed: number) {
+/** Cosmetic wobble for the spinning number — animation only, NOT the game outcome
+ * (the outcome comes from the runtime's provably-fair Dice engine). */
+function wobbleRng(seed: number) {
   let a = seed >>> 0;
   return () => {
     a |= 0;
@@ -30,29 +34,12 @@ function rng(seed: number) {
   };
 }
 
-/** Deterministic roll in [0, 99.99] from a seed. */
-function rollFor(seed: number) {
-  const r = rng(seed)();
-  return Math.floor(r * 10000) / 100;
-}
-
-/** Win chance (%) for a target + direction. */
-function chanceFor(target: number, dir: Direction) {
-  return dir === 'over' ? 100 - target : target;
-}
-
-/** Fair-ish multiplier with ~1% house edge. */
-function multFor(target: number, dir: Direction) {
-  const chance = chanceFor(target, dir);
-  if (chance <= 0) return 0;
-  return (HOUSE_EDGE * 100) / chance;
-}
-
 export function DiceGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so balance/stats/history
+  // surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('dice');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
-  const credit = useDemoWallet((s) => s.credit);
-  const record = useGameStats((s) => s.record);
   const stat = useGameStats((s) => s.games.dice);
 
   const [bet, setBet] = useState(100);
@@ -79,37 +66,34 @@ export function DiceGame() {
   }, []);
   useEffect(() => cleanup, [cleanup]);
 
-  const chance = chanceFor(target, dir);
-  const mult = multFor(target, dir);
+  const chance = diceChance(target, dir);
+  const mult = diceMultiplier(target, dir);
   const stake = Math.max(1, Math.floor(bet));
   const potential = Math.round(stake * mult);
 
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
   const settle = useCallback(
-    (roll: number, t: number, d: Direction, s: number) => {
-      const win = d === 'over' ? roll > t : roll < t;
-      const m = multFor(t, d);
+    (roll: number, win: boolean, m: number, s: number, roundId: string) => {
       if (win) {
         const payout = Math.round(s * m);
-        credit(payout);
         setResult({ win: true, payout, roll });
         fxKeyRef.current += 1;
         setFx({ key: fxKeyRef.current, type: 'win', amount: payout - s });
         sound.play('reward');
-        record('dice', { label: roll.toFixed(2), win: true, payout: payout - s, value: roll });
-        useDemoWallet.getState().recordBet({ game: 'Dice', stake: s, win: true, net: payout - s, multiplier: m });
+        // Runtime settles the win: credit + bet-history + stats (label = the roll).
+        void runtime.cashOut({ roundId, atMultiplier: m }).catch(() => {});
       } else {
         setResult({ win: false, payout: -s, roll });
         setFx({ key: fxKeyRef.current, type: 'lose' });
         sound.play('lose');
-        record('dice', { label: roll.toFixed(2), win: false, payout: -s, value: roll });
-        useDemoWallet.getState().recordBet({ game: 'Dice', stake: s, win: false, net: -s, multiplier: 0 });
+        void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
       }
     },
-    [credit, record],
+    [runtime],
   );
 
   const animateTo = useCallback(
-    (roll: number, t: number, d: Direction, s: number, duration: number) => {
+    (roll: number, win: boolean, m: number, s: number, roundId: string, duration: number) => {
       const start = performance.now();
       const from = 0;
       sound.play('diceRoll');
@@ -120,7 +104,7 @@ export function DiceGame() {
         const p = Math.min(1, elapsed / duration);
         // ease-out cubic, with a little jitter while spinning
         const eased = 1 - Math.pow(1 - p, 3);
-        const jitter = p < 0.85 ? (rng(Math.floor(elapsed) ^ seedRef.current)() - 0.5) * (1 - p) * 24 : 0;
+        const jitter = p < 0.85 ? (wobbleRng(Math.floor(elapsed) ^ seedRef.current)() - 0.5) * (1 - p) * 24 : 0;
         const v = Math.max(0, Math.min(99.99, from + (roll - from) * eased + jitter));
         setDisplay(v);
         if (p < 1) {
@@ -130,7 +114,7 @@ export function DiceGame() {
         setDisplay(roll);
         setSettled(roll);
         setRolling(false);
-        settle(roll, t, d, s);
+        settle(roll, win, m, s, roundId);
       };
       raf.current = requestAnimationFrame(step);
     },
@@ -138,39 +122,61 @@ export function DiceGame() {
   );
 
   const roll = useCallback(
-    (opts?: { replaySeed?: number; instant?: boolean }) => {
+    (opts?: { instant?: boolean }) => {
       if (rolling) return;
       const s = Math.max(1, Math.floor(bet));
+      if (!session) {
+        toast.error('Starting session… try again in a moment.');
+        return;
+      }
       if (s > balance) {
         toast.error('Not enough demo coins — hit reload in the balance pill.');
         autoOn.current = false;
         setAuto(false);
         return;
       }
-      const seed =
-        opts?.replaySeed ??
-        ((Math.floor(performance.now() * 1000) & 0x7fffffff) ^ (stat.seq * 2654435761)) >>> 0;
-      seedRef.current = seed >>> 0;
-      const value = rollFor(seedRef.current);
       const t = target;
       const d = dir;
-
-      spend(s);
+      const betReq: IBetRequest<DicePick> = {
+        gameId: 'dice',
+        sessionId: session.sessionId,
+        stake: { amount: String(s), currency: 'INR' },
+        mode: BetMode.Single,
+        selections: [{ pick: { target: t, dir: d } }],
+        idempotencyKey: `dice:${session.sessionId}:${stat.seq}:${s}`,
+        clientSeed: 'demo',
+      };
+      // Cosmetic wobble seed (animation only — the roll comes from the engine).
+      seedRef.current = (Math.floor(performance.now()) & 0x7fffffff) >>> 0;
       setResult(null);
       setSettled(null);
       setRolling(true);
 
-      if (opts?.instant) {
-        sound.play('diceBounce');
-        setDisplay(value);
-        setSettled(value);
-        setRolling(false);
-        settle(value, t, d, s);
-      } else {
-        animateTo(value, t, d, s, ROLL_MS);
-      }
+      // Runtime: validate → debit → engine (provably-fair roll). UI animates to it.
+      void runtime
+        .startRound<DiceState>(betReq)
+        .then(({ result, roundId }) => {
+          const value = result.state.roll;
+          const win = result.win;
+          const m = result.multiplier || diceMultiplier(t, d);
+          if (opts?.instant) {
+            sound.play('diceBounce');
+            setDisplay(value);
+            setSettled(value);
+            setRolling(false);
+            settle(value, win, m, s, roundId);
+          } else {
+            animateTo(value, win, m, s, roundId, ROLL_MS);
+          }
+        })
+        .catch((e: unknown) => {
+          setRolling(false);
+          autoOn.current = false;
+          setAuto(false);
+          toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+        });
     },
-    [rolling, bet, balance, stat.seq, target, dir, spend, animateTo, settle],
+    [rolling, bet, balance, session, stat.seq, target, dir, runtime, animateTo, settle],
   );
 
   // Auto-roll loop
@@ -436,9 +442,9 @@ export function DiceGame() {
             <Button
               variant="glass"
               size="lg"
-              onClick={() => roll({ replaySeed: seedRef.current })}
+              onClick={() => roll()}
               disabled={disabled || settled === null}
-              title="Replay last seed"
+              title="Roll again"
             >
               <RotateCcw className="h-5 w-5" />
             </Button>

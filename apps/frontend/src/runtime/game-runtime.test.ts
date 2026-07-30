@@ -3,6 +3,8 @@ import { BetMode, BetOutcome } from '@gaming-platform/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDemoWallet } from '@/stores/demo-wallet';
+import { useGameStats } from '@/stores/game-stats';
+import { usePlayerProfile } from '@/stores/player-profile';
 import { BetEngine } from './bet-engine';
 import { CrashEngine, CRASH_CONFIG } from './engines/crash-engine';
 import type { RuntimeGameEngine } from './engine-registry';
@@ -161,6 +163,52 @@ describe('game-runtime — instant lifecycle (placeBet)', () => {
     expect(out.outcome).toBe(BetOutcome.Win);
     expect(out.payout).toBe('300'); // stake 100 × 3
     expect(useDemoWallet.getState().balance).toBe(1200); // 900 debited + 300 payout
+  });
+
+  it('forwards a game-supplied display label/value and awards descriptor XP', async () => {
+    // A game whose history label is NOT a multiplier (e.g. a dice roll) and that
+    // declares an XP reward — the exact shape the migrated single-shot games use.
+    class LabeledEngine implements RuntimeGameEngine {
+      readonly engineKey = 'labeled';
+      createRound(input: { session: IGameSession }): IGameResult {
+        return {
+          roundId: '',
+          gameId: input.session.gameId,
+          state: { roll: 73.4 },
+          multiplier: 2,
+          win: true,
+          computedAt: new Date().toISOString(),
+          display: { label: '73.40', value: 73.4 },
+        };
+      }
+    }
+    const rt = new GameRuntime(createProviderSet(), PLAYER);
+    rt.registerEngine(new LabeledEngine());
+    rt.registerGame({
+      ...INSTANT_GAME,
+      gameId: 'labeled',
+      name: 'Labeled',
+      engineKey: 'labeled',
+      config: { ...INSTANT_GAME.config, rewards: { winXp: 40, lossXp: 12 } },
+    });
+    const xpSpy = vi.spyOn(usePlayerProfile.getState(), 'addXp');
+    const session = await rt.createSession({ gameId: 'labeled' });
+    await rt.placeBet(betFor(session, { gameId: 'labeled' }));
+
+    // The stats strip shows the game's own label/value, not `${multiplier}×`.
+    const stat = useGameStats.getState().catalog['labeled'];
+    expect(stat?.history[0].label).toBe('73.40');
+    expect(stat?.history[0].value).toBe(73.4);
+    expect(xpSpy).toHaveBeenCalledWith(40);
+    xpSpy.mockRestore();
+  });
+
+  it('a game with no rewards awards no XP (crash-style, unchanged)', async () => {
+    const xpSpy = vi.spyOn(usePlayerProfile.getState(), 'addXp');
+    const session = await runtime.createSession({ gameId: 'instant' });
+    await runtime.placeBet(betFor(session, { gameId: 'instant' }));
+    expect(xpSpy).not.toHaveBeenCalled();
+    xpSpy.mockRestore();
   });
 });
 

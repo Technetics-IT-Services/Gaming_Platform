@@ -167,9 +167,12 @@ export class GameRuntime {
 
   /* ---------------------------- lifecycle: cashable ----------------------- */
 
-  /** Start a cashable round (crash): validate → debit → engine determines the target. */
-  async startRound<TState = unknown>(
-    bet: IBetRequest<number>,
+  /** Start a cashable round (crash) or an animated-reveal round (dice/roulette/…):
+   * validate → debit → engine determines the outcome; the UI reveals it, then
+   * settles via cashOut (win) / finishRound (loss). Generic over the pick type to
+   * match `placeBet` — the runtime stays agnostic to any game's selection shape. */
+  async startRound<TState = unknown, TPick = unknown>(
+    bet: IBetRequest<TPick>,
   ): Promise<{ result: IGameResult<TState>; roundId: string }> {
     try {
       const session = await this.validateAndDebit(bet as IBetRequest);
@@ -239,17 +242,22 @@ export class GameRuntime {
     this.sessions.settle(result.roundId);
     this.bus.emit(RuntimeEventName.SETTLEMENT_COMPLETED, { betResult }, { sessionId: session.sessionId, roundId: result.roundId });
 
-    // History (delegates to demo stores → keeps existing UI surfaces in sync)
+    // History (delegates to demo stores → keeps existing UI surfaces in sync).
+    // Presentation (label/value) and XP are game-supplied so non-multiplier games
+    // (dice roll, roulette pocket, card total) keep their exact history surface;
+    // absent, the runtime falls back to the multiplier (crash is unchanged).
     const game = this.games.get(bet.gameId);
+    const rewards = game?.config.rewards as { winXp?: number; lossXp?: number } | undefined;
     const record: DemoHistoryRecord = {
       ...betResult,
       outcome: win ? BetOutcome.Win : BetOutcome.Loss,
       playerId: session.playerId,
       gameId: bet.gameId,
       gameName: game?.name,
-      displayLabel: `${displayValue.toFixed(2)}×`,
-      displayValue,
+      displayLabel: result.display?.label ?? `${displayValue.toFixed(2)}×`,
+      displayValue: result.display?.value ?? displayValue,
       multiplier: creditMultiplier ?? betResult.multiplier,
+      xp: rewards ? (win ? rewards.winXp ?? 40 : rewards.lossXp ?? 12) : undefined,
     };
     await this.providers.history.record(record);
     this.bus.emit(RuntimeEventName.HISTORY_UPDATED, { record }, { sessionId: session.sessionId, roundId: result.roundId });
