@@ -448,3 +448,45 @@ client until the round ends — provably fair + tamper-evident.
 
 No runtime, provider, contract, event, or state-machine change is required — verified: Phase 4
 touched zero files under `src/runtime/**` or `packages/types`.
+
+## 17. Production game UI kit (Phase 4B)
+
+Every instant game now has a production UI — all built as **pure UI over the frozen runtime**
+(zero platform/engine/registry changes). The UIs live in
+`src/components/games/prototype/instant/` and are lazy-loaded + routed through
+`demo-play.tsx` (via `INSTANT_PROTO` in `demo-games.ts`).
+
+### 17.1 Shared UI primitives (`instant/shared.tsx`)
+
+- **`BetAmount`** — amount input + ½/2× + quick chips (labelled controls).
+- **`HistoryStrip`** — recent-results strip with an empty state.
+- **`Stat`** — a stat tile.
+- **`ProvablyFair`** — a native `<details>` disclosure surfacing the round's committed
+  `serverSeedHash` (keyboard-operable, screen-reader friendly).
+
+Reuse these for any new game's UI so bet controls, history, and the fairness panel stay
+consistent and accessible.
+
+### 17.2 UI contract
+
+A game UI calls **only** `useGameRuntime(gameId)` + the runtime lifecycle — never a provider,
+wallet, RNG, or settlement:
+- **Single-shot** (Coin Flip, Wheel, Keno, Bingo, Lucky Pick): `startRound` → animate the engine's
+  `state` → `cashOut` (win) / `finishRound` (loss).
+- **Interactive** (Mines, Bomb Hunt, Tower): `startInteractive` → `submitAction`
+  (`reveal`/`pick`/`cashout`); render `step.gameState`, settle on `Completed`.
+
+### 17.3 Animation, sound, accessibility, responsiveness
+
+- **Animations** (framer-motion) are presentation-only and never gate settlement: coin spin,
+  wheel rotation (SVG wedges), tile reveal, explosion, floor climb, ball draw, number reveal, box
+  reveal. Reduced-motion is honoured by the shared `@/lib/sound` (muted by default) and by keeping
+  outcomes independent of animation.
+- **Sound**: cues come from `@/lib/sound` (`click/coin/win/jackpot/lose/reveal/cashout/ball/…`) with
+  a global mute — never hardcoded in engines.
+- **Accessibility**: `role="radiogroup"`/`radio` for choices, `role="grid"/"gridcell"` for boards,
+  `aria-label`/`aria-live` on stages, focusable native controls, disabled-state management.
+- **Responsive**: a `2fr/1fr` stage-plus-controls grid that stacks on mobile; boards use CSS grid
+  with `aspect-square` cells; `max-w` caps keep the stage centred on desktop.
+- **Performance**: each game is a `next/dynamic` lazy chunk; game state lives in the runtime for
+  interactive rounds (the UI holds only view state); no per-frame React state in hot paths.
