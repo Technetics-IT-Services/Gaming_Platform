@@ -27,6 +27,14 @@ import { DiceEngine, DICE_CONFIG } from './dice-engine';
 import { RouletteEngine } from './roulette-engine';
 import { PlinkoEngine, PLINKO_CONFIG } from './plinko-engine';
 import { SlotsEngine } from './slots-engine';
+import { BingoEngine, BINGO_CONFIG } from './instant/bingo-engine';
+import { CoinFlipEngine, COIN_FLIP_CONFIG } from './instant/coin-flip-engine';
+import { GridRevealEngine } from './instant/grid-reveal-engine';
+import { KenoEngine, KENO_CONFIG } from './instant/keno-engine';
+import { LimboEngine, LIMBO_CONFIG } from './instant/limbo-engine';
+import { LuckyPickEngine, LUCKY_PICK_CONFIG } from './instant/lucky-pick-engine';
+import { TowerEngine, TOWER_CONFIG } from './instant/tower-engine';
+import { WheelEngine } from './instant/wheel-engine';
 
 /** Single-shot reveal games (deal → animate → settle) share these capabilities. */
 const REVEAL_CAPS: GameModule['descriptor']['capabilities'] = {
@@ -39,6 +47,12 @@ const REVEAL_CAPS: GameModule['descriptor']['capabilities'] = {
   liveDealer: false,
   tournament: false,
 };
+
+/** Interactive games (Phase 4: Mines/Bomb Hunt/Tower) can cash out mid-round. */
+const INTERACTIVE_CAPS: GameModule['descriptor']['capabilities'] = { ...REVEAL_CAPS, cashOut: true };
+
+/** One grid-reveal engine backs both Mines and Bomb Hunt (games = config only). */
+const gridRevealEngine = new GridRevealEngine();
 
 /** A registrable game = its engine + its descriptor. */
 export interface GameModule {
@@ -226,6 +240,107 @@ export const GAME_MODULES: GameModule[] = [
       category: 'slots',
       capabilities: { ...REVEAL_CAPS },
       config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+
+  /* -------------------- Phase 4 — new instant games -------------------- */
+  {
+    engine: new LimboEngine(),
+    descriptor: {
+      gameId: 'limbo',
+      name: 'Limbo',
+      engineKey: 'limbo',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { ...LIMBO_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new CoinFlipEngine(),
+    descriptor: {
+      gameId: 'coin-flip',
+      name: 'Coin Flip',
+      engineKey: 'coin-flip',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { ...COIN_FLIP_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new WheelEngine(),
+    descriptor: {
+      gameId: 'wheel',
+      name: 'Wheel',
+      engineKey: 'wheel',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: gridRevealEngine,
+    descriptor: {
+      gameId: 'mines',
+      name: 'Mines',
+      engineKey: 'grid-reveal',
+      category: 'instant',
+      capabilities: { ...INTERACTIVE_CAPS },
+      config: { tiles: 25, mines: 3, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: gridRevealEngine,
+    descriptor: {
+      gameId: 'bomb-hunt',
+      name: 'Bomb Hunt',
+      engineKey: 'grid-reveal',
+      category: 'instant',
+      capabilities: { ...INTERACTIVE_CAPS },
+      config: { tiles: 16, mines: 3, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new TowerEngine(),
+    descriptor: {
+      gameId: 'tower',
+      name: 'Tower',
+      engineKey: 'tower',
+      category: 'instant',
+      capabilities: { ...INTERACTIVE_CAPS },
+      config: { ...TOWER_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new KenoEngine(),
+    descriptor: {
+      gameId: 'keno',
+      name: 'Keno',
+      engineKey: 'keno',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { ...KENO_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new BingoEngine(),
+    descriptor: {
+      gameId: 'bingo',
+      name: 'Bingo',
+      engineKey: 'bingo',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { ...BINGO_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new LuckyPickEngine(),
+    descriptor: {
+      gameId: 'lucky-pick',
+      name: 'Lucky Pick',
+      engineKey: 'lucky-pick',
+      category: 'instant',
+      capabilities: { ...REVEAL_CAPS },
+      config: { ...LUCKY_PICK_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
     },
   },
 ];
