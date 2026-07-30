@@ -7,7 +7,7 @@ import Link from 'next/link';
 import type { ComponentType } from 'react';
 
 import { DepositRequired } from '@/components/wallet/bet-gate';
-import { type CardProto, demoExperienceFor } from '@/lib/demo-games';
+import { type CardProto, type InstantProto, demoExperienceFor } from '@/lib/demo-games';
 import { useDemoWallet } from '@/stores/demo-wallet';
 
 /**
@@ -35,6 +35,11 @@ const CARD_GAMES: Record<CardProto, ComponentType> = {
   blackjack: dynamic(() => import('@/components/games/prototype/cards/blackjack').then((m) => m.BlackjackGame), { ssr: false, loading }),
   'casino-war': dynamic(() => import('@/components/games/prototype/cards/casino-war').then((m) => m.CasinoWarGame), { ssr: false, loading }),
   'lucky-7': dynamic(() => import('@/components/games/prototype/cards/lucky-7').then((m) => m.Lucky7Game), { ssr: false, loading }),
+};
+
+/** Phase 4 instant games with a bespoke UI (registry-driven runtime; UI-only). */
+const INSTANT_GAMES: Record<InstantProto, ComponentType> = {
+  limbo: dynamic(() => import('@/components/games/prototype/instant/limbo-game').then((m) => m.LimboGame), { ssr: false, loading }),
 };
 
 const CrashGame = dynamic(() => import('@/components/games/prototype/crash-game').then((m) => m.CrashGame), { ssr: false, loading });
@@ -98,9 +103,10 @@ export function DemoPlay({
 
   const Game: ComponentType =
     exp.kind === 'card' ? CARD_GAMES[exp.game]
-      : exp.kind === 'crash' ? CrashGame
-        : exp.kind === 'dice' ? DiceGame
-          : RouletteGame;
+      : exp.kind === 'instant' ? INSTANT_GAMES[exp.game]
+        : exp.kind === 'crash' ? CrashGame
+          : exp.kind === 'dice' ? DiceGame
+            : RouletteGame;
 
   return (
     <div className="flex h-full flex-col">

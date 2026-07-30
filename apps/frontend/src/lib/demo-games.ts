@@ -348,8 +348,14 @@ const CARD_PROTO: Record<string, string> = {
 export type CardProto =
   | 'teen-patti' | 'andar-bahar' | 'dragon-tiger' | 'baccarat' | 'blackjack' | 'casino-war' | 'lucky-7';
 
+/** Phase 4 instant games with a bespoke UI. Extend as each game's UI ships;
+ * unmapped instant slugs fall through to the generic slot demo. */
+export type InstantProto = 'limbo';
+const INSTANT_PROTO: Record<string, InstantProto> = { limbo: 'limbo' };
+
 export type DemoExperience =
   | { kind: 'card'; game: CardProto }
+  | { kind: 'instant'; game: InstantProto }
   | { kind: 'crash' }
   | { kind: 'dice' }
   | { kind: 'roulette' }
@@ -381,6 +387,8 @@ function categoryExperience(category: string | undefined): DemoExperience {
  * self-contained, backend-free experience. Never throws; unknown → slot demo.
  */
 export function demoExperienceFor(slug: string): DemoExperience {
+  const instant = INSTANT_PROTO[slug];
+  if (instant) return { kind: 'instant', game: instant };
   const proto = CARD_PROTO[slug];
   if (proto) return { kind: 'card', game: proto as CardProto };
   const seed = BY_SLUG.get(slug);
