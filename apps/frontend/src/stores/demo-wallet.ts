@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import { recordLedger, resetWalletLedger } from './wallet-ledger';
+
 /**
  * Client-side demo wallet ecosystem (Phase 1.2 → 1.3). One source of truth for
  * the demo balance, the vault, and the transaction + bet ledgers — all persisted
@@ -144,6 +146,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             const amt = Math.max(0, Math.floor(amount));
             if (amt <= 0) return s;
             const balance = s.balance + amt;
+            recordLedger('deposit', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, ...withTxn(s, 'deposit', amt, balance) };
           }),
 
@@ -154,6 +157,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             if (amt <= 0 || amt > s.balance) return s;
             ok = true;
             const balance = s.balance - amt;
+            recordLedger('withdraw', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, ...withTxn(s, 'withdraw', -amt, balance) };
           });
           return ok;
@@ -166,6 +170,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             if (amt <= 0 || amt > s.balance) return s;
             ok = true;
             const balance = s.balance - amt;
+            recordLedger('vault_in', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, vault: s.vault + amt, ...withTxn(s, 'vault_in', -amt, balance) };
           });
           return ok;
@@ -178,6 +183,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             if (amt <= 0 || amt > s.vault) return s;
             ok = true;
             const balance = s.balance + amt;
+            recordLedger('vault_out', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, vault: s.vault - amt, ...withTxn(s, 'vault_out', amt, balance) };
           });
           return ok;
@@ -188,6 +194,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             const amt = Math.max(0, Math.floor(amount));
             if (amt <= 0) return s;
             const balance = Math.max(0, s.balance - amt);
+            recordLedger('bet', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, ...withTxn(s, 'bet', -amt, balance) };
           }),
 
@@ -196,6 +203,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             const amt = Math.max(0, Math.floor(amount));
             if (amt <= 0) return s;
             const balance = s.balance + amt;
+            recordLedger('win', amt, { preBalance: s.balance, preVault: s.vault });
             return { balance, ...withTxn(s, 'win', amt, balance) };
           }),
 
@@ -204,6 +212,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             const amt = Math.max(0, Math.floor(amount));
             if (amt <= 0) return s;
             const balance = s.balance + amt;
+            recordLedger('bonus', amt, { preBalance: s.balance, preVault: s.vault, reason: opts?.source });
             return {
               balance,
               ...withTxn(s, 'bonus', amt, balance, { label: opts?.label, note: opts?.source }),
@@ -215,6 +224,7 @@ export const useDemoWallet = create<DemoWalletState>()(
             const amt = Math.max(0, Math.floor(amount));
             if (amt <= 0) return s;
             const balance = s.balance + amt;
+            recordLedger('refund', amt, { preBalance: s.balance, preVault: s.vault, reason: opts?.source });
             return {
               balance,
               ...withTxn(s, 'refund', amt, balance, { label: opts?.label, note: opts?.source }),
@@ -247,14 +257,17 @@ export const useDemoWallet = create<DemoWalletState>()(
             const top = Math.max(0, DEMO_RELOAD - s.balance);
             if (top <= 0) return s;
             const balance = s.balance + top;
+            recordLedger('bonus', top, { preBalance: s.balance, preVault: s.vault, reason: 'reload' });
             return {
               balance,
               ...withTxn(s, 'bonus', top, balance, { label: 'Demo Reload', note: 'reload' }),
             };
           }),
 
-        reset: () =>
-          set({ balance: 0, vault: 0, transactions: [], bets: [], txnSeq: 0, betSeq: 0 }),
+        reset: () => {
+          resetWalletLedger();
+          set({ balance: 0, vault: 0, transactions: [], bets: [], txnSeq: 0, betSeq: 0 });
+        },
       };
     },
     {
