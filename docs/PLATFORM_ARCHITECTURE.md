@@ -618,3 +618,85 @@ To add a gateway: (1) write `MyProvider implements IPaymentProvider` in
 and register it in `createGatewayRegistry`. Nothing else changes — the `PaymentService`, ledger,
 wallet, runtime, and games are all untouched. **Not implemented (later phases):** withdrawal
 approval, KYC, AML, fraud detection, and any finance/admin/partner portal.
+
+## 20. Withdrawals, treasury & finance operations (Phase 5C)
+
+The **cash-out** layer above the ledger: `Games → Runtime → Wallet → Ledger → Withdrawal
+Service → Treasury Engine → Payout Gateway → external`. **The Runtime never knows withdrawals
+exist** — money leaves the platform only through this workflow, and every movement is
+double-entry through the Phase 5A ledger (no balance is ever touched directly). **Zero platform
+change** (nothing under `src/runtime/**`, the game engines, registry, game providers, settlement,
+event bus, or session manager). Module: `src/lib/treasury/` (framework-agnostic TS).
+
+### 20.1 Withdrawal model & lifecycle
+
+A `Withdrawal` carries `id` (opaque `wd_<hex>`), human `reference` (`WD-000001`), player, amount
+(integer minor units), currency, `status`, method/destination (masked), `correlationId`,
+`idempotencyKey`, approval/rejection metadata, `ledgerRefs` (the txn id of each step:
+reserve/commit/settle/disburse/release/reverse) and timestamps. The lifecycle supports full and
+partial cash-outs, cancel, reject, reversal and retry.
+
+### 20.2 Approval state machine (STEP 4)
+
+A configurable, **validated** transition table (`WITHDRAWAL_TRANSITIONS`): `Draft → Requested →
+PendingReview → Approved → Processing → Completed`, with `Rejected`/`Cancelled`/`Failed`/`Reversed`
+branches. `Failed → Processing` (retry) and `Completed → Reversed` are allowed; terminal states
+(`Rejected`/`Cancelled`/`Reversed`) have no exits. Every service action calls `assertTransition`
+before moving money, so an out-of-order approval or settlement can never occur.
+
+### 20.3 Treasury engine — double-entry money flow (STEP 3)
+
+`TreasuryEngine` posts balanced pairs over the ledger through four treasury accounts:
+`player:{id}:locked` (Reserve) → `treasury:pending` (commit) → `treasury:settlement` →
+`external:world` (disburse). Steps: `commit` (locked→pending), `settle` (pending→settlement, then
+settlement→external, `external:world` allowed negative), `releasePending` (pending→locked, undo a
+commit), `reverse` (external→wallet, undo a completed disbursement). `external:world` is the single
+shared outside-world account (also used by deposits), so its balance equals `-(net funds inside the
+platform)`.
+
+### 20.4 Withdrawal service (STEPs 2 & 10)
+
+`WithdrawalService` orchestrates: `createRequest` (validate limits + available balance, idempotency
+dedupe, **reserve** wallet→locked, status `Requested`) → `submitForReview` → `approve` (authorizer
+hook) → `process` (**commit** locked→pending + call the payout gateway) → on success **settle**
+(pending→external, `Completed`), on failure `Failed` (funds stay in pending). Branches: `reject`/
+`cancel` **release** funds back to the wallet (cancel-from-`Failed` first unwinds the commit),
+`retry` re-attempts a failed payout, `reverse` returns a completed disbursement. The canonical rule
+holds: **Reserve → ledger txn → await approval → settle → release/finalize → audit; never a direct
+balance change.** Each lifecycle step is keyed (`wd-reserve:<id>`, `wd-commit:<id>`,
+`wd-settle:<id>`, …) so retries are idempotent.
+
+### 20.5 Financial limits (STEP 5)
+
+`WithdrawalValidator` enforces: positive-integer amount, `min`, `perTransaction`, a **rolling-day
+`dailyMax`** (tallied from active withdrawals via an injectable clock), and the player's
+**available balance** (`INSUFFICIENT_FUNDS`). Cancelled/rejected/reversed withdrawals free daily
+headroom again. The ledger's own per-account negative-balance guard is the final backstop.
+
+### 20.6 Reconciliation (STEP 6)
+
+`reconcile()` proves the whole ledger balances (`systemSum === 0`) **and** that the
+`treasury:pending` balance equals the sum of `Processing`/`Failed` withdrawals, flagging any
+`unmatched` ids. `treasurySummary` reports reserved/pending/settlement/external totals + balanced
+flag; `settlementSummary` reports completed count + amount.
+
+### 20.7 Manual operations (STEP 7)
+
+All authorizer-gated and fully audited: `manualAdjustment` (ledger credit/debit, actor recorded in
+the reason + audit), `manualRelease` (free a stuck reservation), `manualRetry`, `manualReversal`.
+No operation bypasses the ledger.
+
+### 20.8 Reporting & security (STEPs 8 & 9)
+
+Reporting: `history` (filter by player/status/date/search, cursor pagination), `pending`,
+`completed`, `rejected`, `treasurySummary`, `settlementSummary`, `auditTrail`. Security: injectable
+`Authorizer` (approve/reject/manual/reverse/retry) and `RateLimiter` hooks, input validation,
+cryptographically-random opaque ids + correlation ids, per-step idempotency keys (replay
+protection), and an audit record on every action carrying **no** sensitive data.
+
+### 20.9 Payout provider integration guide
+
+To add a payout rail: implement `IPayoutGateway.payout(...)` (returns `{ok, reference?, reason?}`)
+and inject it into `WithdrawalService` — exactly like the deposit port. Nothing else changes; the
+ledger, wallet, treasury, runtime and games are untouched. **Not implemented (by design):** KYC,
+AML, fraud detection, device fingerprinting, risk scoring, and any finance/admin/partner portal UI.
