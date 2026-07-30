@@ -5,7 +5,7 @@
  * engine is a PURE function of input + RNG → result; it never touches the wallet,
  * history, or IO. Type-only.
  */
-import type { IBetRequest } from './betting';
+import type { IBetRequest, ISettlementResult } from './betting';
 import type {
   CurrencyCode,
   GameId,
@@ -15,6 +15,7 @@ import type {
   SessionStatus,
   Timestamp,
 } from './common';
+import type { IStepResult, PlayerAction } from './interactive';
 import type { IFairnessProof, IProvablyFairProvider } from './providers';
 
 /** Capabilities a game declares — drives which runtime features + UI controls turn on. */
@@ -81,25 +82,48 @@ export interface IGameResult<TState = unknown> {
    * affects settlement or payout.
    */
   display?: { label?: string; value?: number };
+  /**
+   * Optional flexible settlement (Phase 2.3C). When present, the settlement
+   * provider uses it verbatim (payout/refund/bonus/type) instead of the default
+   * `stake × multiplier`. Absent → the multiplicative default (crash/dice/… are
+   * unchanged).
+   */
+  settlement?: ISettlementResult;
 }
 
 /**
- * A pure, deterministic game engine. Given a session, a bet, its config and an
- * RNG, it returns a result. It performs NO wallet, history, or network IO — the
- * Runtime does that around it. `step` is optional for interactive games
- * (blackjack hit/stand, hi-lo higher/lower, tower reveal, …).
+ * A pure, deterministic game engine. It performs NO wallet, history, or network
+ * IO — the Runtime does that around it.
+ *
+ * Two shapes, both optional so an engine implements exactly one:
+ *  - Single-shot: `createRound` returns the outcome in one call (crash, dice, …).
+ *  - Interactive (Phase 2.3C): `start` opens a round and `step` applies a generic
+ *    `PlayerAction`, each returning an `IStepResult` (state + opaque game state).
+ *    The engine validates transitions; the Runtime owns the state machine and
+ *    knows nothing about the game's rules.
  */
-export interface IGameEngine<TConfig = unknown, TPick = unknown, TState = unknown> {
+export interface IGameEngine<TConfig = unknown, TPick = unknown, TState = unknown, TGameState = unknown> {
   readonly engineKey: string;
-  createRound(input: {
+  createRound?(input: {
     session: IGameSession;
     bet: IBetRequest<TPick>;
     config: TConfig;
     rng: IProvablyFairProvider;
   }): Promise<IGameResult<TState>> | IGameResult<TState>;
+  /** Open an interactive round → initial machine state. */
+  start?(input: {
+    session: IGameSession;
+    bet: IBetRequest<TPick>;
+    config: TConfig;
+    rng: IProvablyFairProvider;
+  }): IStepResult<TGameState>;
+  /** Apply a player/system action → next machine state. */
   step?(input: {
-    roundId: RoundId;
-    action: string;
-    payload?: unknown;
-  }): Promise<IGameResult<TState>> | IGameResult<TState>;
+    session: IGameSession;
+    bet: IBetRequest<TPick>;
+    config: TConfig;
+    rng: IProvablyFairProvider;
+    gameState: TGameState;
+    action: PlayerAction;
+  }): IStepResult<TGameState>;
 }

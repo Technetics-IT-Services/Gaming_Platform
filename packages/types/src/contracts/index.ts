@@ -12,5 +12,6 @@
 export * from './common';
 export * from './betting';
 export * from './game';
+export * from './interactive';
 export * from './runtime';
 export * from './providers';

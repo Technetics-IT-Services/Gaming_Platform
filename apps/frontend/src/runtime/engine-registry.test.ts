@@ -59,7 +59,7 @@ describe('engine-registry', () => {
   it('resolves a registered engine that produces a result', () => {
     registry.register(stubEngine('crash'));
     const engine = registry.get('crash');
-    const result = engine?.createRound({
+    const result = engine?.createRound?.({
       session: {} as IGameSession,
       bet: {} as IBetRequest,
       config: {},

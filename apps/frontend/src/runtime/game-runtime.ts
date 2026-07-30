@@ -9,9 +9,11 @@ import type {
   IGameDescriptor,
   IGameResult,
   IGameSession,
+  IStepResult,
+  PlayerAction,
   PlayerId,
 } from '@gaming-platform/types';
-import { BetOutcome } from '@gaming-platform/types';
+import { RuntimeState } from '@gaming-platform/types';
 
 import { BetEngine, type BetLimits } from './bet-engine';
 import { EngineRegistry } from './engine-registry';
@@ -49,6 +51,18 @@ export class GameRuntime {
   private readonly games = new Map<GameId, GameRegistration>();
   private readonly nonces = new Map<string, number>();
   private readonly serverSeeds = new Map<string, string>();
+  /** Live interactive rounds (Phase 2.3C) — the runtime-owned state machine. */
+  private readonly steps = new Map<
+    string,
+    {
+      bet: IBetRequest;
+      session: IGameSession;
+      config: Record<string, unknown>;
+      fairness: IFairnessProof;
+      gameState: unknown;
+      state: RuntimeState;
+    }
+  >();
 
   constructor(
     private readonly providers: ProviderSet,
@@ -140,7 +154,9 @@ export class GameRuntime {
   private runEngine(session: IGameSession, bet: IBetRequest): { result: IGameResult; roundId: string } {
     const game = this.games.get(bet.gameId);
     const engine = this.engines.get(game?.engineKey ?? '');
-    if (!game || !engine) throw new GameError(RuntimeErrorCode.ENGINE_FAILURE, `No engine for game ${bet.gameId}.`);
+    if (!game || !engine?.createRound) {
+      throw new GameError(RuntimeErrorCode.ENGINE_FAILURE, `No single-shot engine for game ${bet.gameId}.`);
+    }
     const fairness = this.nextFairness(session, bet.clientSeed ?? 'demo');
     const round = this.sessions.createRound({ session, bet, fairness });
     const raw = engine.createRound({ session, bet, config: game.config, rng: this.providers.provablyFair, fairness });
@@ -216,6 +232,127 @@ export class GameRuntime {
     this.bus.emit(RuntimeEventName.ROUND_CANCELLED, { roundId: input.roundId }, { sessionId: round.session.sessionId, roundId: input.roundId });
   }
 
+  /* --------------------------- lifecycle: interactive --------------------- */
+
+  /**
+   * Open an interactive round (Phase 2.3C): validate → debit → engine.start. The
+   * runtime owns the state machine + stores the opaque game state; the engine
+   * decides transitions. If the engine already completes on start, it settles.
+   */
+  async startInteractive<TGameState = unknown>(
+    bet: IBetRequest,
+  ): Promise<{ roundId: string; step: IStepResult<TGameState> }> {
+    try {
+      const session = await this.validateAndDebit(bet);
+      const game = this.games.get(bet.gameId);
+      const engine = this.engines.get(game?.engineKey ?? '');
+      if (!game || !engine?.start) {
+        throw new GameError(RuntimeErrorCode.ENGINE_FAILURE, `No interactive engine for game ${bet.gameId}.`);
+      }
+      const fairness = this.nextFairness(session, bet.clientSeed ?? 'demo');
+      const round = this.sessions.createRound({ session, bet, fairness });
+      const step = engine.start({ session, bet, config: game.config, rng: this.providers.provablyFair, fairness }) as IStepResult<TGameState>;
+      this.steps.set(round.roundId, { bet, session, config: game.config, fairness, gameState: step.gameState, state: step.state });
+      this.bus.emit(RuntimeEventName.STEP_STARTED, { roundId: round.roundId, step }, { sessionId: session.sessionId, roundId: round.roundId });
+      this.bus.emit(RuntimeEventName.STATE_CHANGED, { roundId: round.roundId, state: step.state }, { sessionId: session.sessionId, roundId: round.roundId });
+      if (step.state === RuntimeState.Completed) await this.finalizeInteractive(round.roundId, step);
+      return { roundId: round.roundId, step };
+    } catch (err) {
+      const e = toRuntimeError(err);
+      this.bus.emit(RuntimeEventName.ERROR, { error: e }, { sessionId: bet.sessionId });
+      throw e;
+    }
+  }
+
+  /**
+   * Route a generic player action to the engine → next machine state. The engine
+   * validates legality; the runtime updates state, emits events, and settles when
+   * the engine reports `Completed`. Rejects on an unknown, finished, or expired
+   * round — never interprets the action itself.
+   */
+  async submitAction<TGameState = unknown>(input: {
+    roundId: string;
+    action: PlayerAction;
+  }): Promise<IStepResult<TGameState>> {
+    const ctx = this.steps.get(input.roundId);
+    if (!ctx) throw new RuntimeError(RuntimeErrorCode.ROUND_NOT_FOUND, 'No interactive round for this id.');
+    if (ctx.state === RuntimeState.Completed || ctx.state === RuntimeState.Cancelled || ctx.state === RuntimeState.Expired) {
+      throw new RuntimeError(RuntimeErrorCode.ROUND_ALREADY_SETTLED, 'Interactive round already finished.');
+    }
+    if (this.sessions.isExpired(ctx.session.sessionId)) {
+      ctx.state = RuntimeState.Expired;
+      this.bus.emit(RuntimeEventName.STATE_CHANGED, { roundId: input.roundId, state: ctx.state }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+      throw new RuntimeError(RuntimeErrorCode.SESSION_EXPIRED, 'Interactive round expired.');
+    }
+    const game = this.games.get(ctx.bet.gameId);
+    const engine = this.engines.get(game?.engineKey ?? '');
+    if (!engine?.step) throw new GameError(RuntimeErrorCode.ENGINE_FAILURE, `Engine ${game?.engineKey} is not interactive.`);
+
+    this.sessions.touch(ctx.session.sessionId);
+    this.bus.emit(RuntimeEventName.PLAYER_ACTION, { roundId: input.roundId, action: input.action }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+
+    let step: IStepResult<TGameState>;
+    try {
+      step = engine.step({ session: ctx.session, bet: ctx.bet, config: ctx.config, rng: this.providers.provablyFair, fairness: ctx.fairness, gameState: ctx.gameState, action: input.action }) as IStepResult<TGameState>;
+    } catch (err) {
+      const e = toRuntimeError(err);
+      this.bus.emit(RuntimeEventName.ERROR, { error: e }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+      throw e;
+    }
+
+    ctx.gameState = step.gameState;
+    ctx.state = step.state;
+    this.bus.emit(RuntimeEventName.STEP_COMPLETED, { roundId: input.roundId, step }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+    this.bus.emit(RuntimeEventName.STATE_CHANGED, { roundId: input.roundId, state: step.state }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+    if (step.state === RuntimeState.Completed) await this.finalizeInteractive(input.roundId, step);
+    return step;
+  }
+
+  /** Read the current machine state + opaque game state of an interactive round. */
+  getStep<TGameState = unknown>(roundId: string): { state: RuntimeState; gameState: TGameState } | null {
+    const ctx = this.steps.get(roundId);
+    return ctx ? { state: ctx.state, gameState: ctx.gameState as TGameState } : null;
+  }
+
+  /** Cancel an interactive round and refund the stake (reuses the round refund). */
+  async cancelInteractive(input: { roundId: string }): Promise<void> {
+    const ctx = this.steps.get(input.roundId);
+    await this.cancelRound({ roundId: input.roundId });
+    if (ctx) {
+      ctx.state = RuntimeState.Cancelled;
+      this.bus.emit(RuntimeEventName.STATE_CHANGED, { roundId: input.roundId, state: ctx.state }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+    }
+  }
+
+  /** Settle a completed interactive round via the shared finalize (flexible settlement). */
+  private async finalizeInteractive(roundId: string, step: IStepResult): Promise<void> {
+    const ctx = this.steps.get(roundId);
+    if (!ctx) return;
+    const settlement = step.settlement;
+    const stake = Number(ctx.bet.stake.amount);
+    const credited = settlement
+      ? Number(settlement.payout || 0) + Number(settlement.refund || 0) + Number(settlement.bonus || 0)
+      : 0;
+    const win = credited > stake;
+    const result: IGameResult = {
+      roundId,
+      gameId: ctx.bet.gameId,
+      state: step.gameState,
+      multiplier: settlement?.multiplier ?? 0,
+      win,
+      fairness: ctx.fairness,
+      computedAt: new Date().toISOString(),
+      display: step.display ?? settlement?.display,
+      settlement,
+    };
+    this.sessions.setResult(roundId, result);
+    // Announce the settlement decision, then run the shared pipeline (credit →
+    // history → ROUND_FINISHED).
+    this.bus.emit(RuntimeEventName.SETTLEMENT_UPDATED, { roundId, settlement }, { sessionId: ctx.session.sessionId, roundId });
+    const displayValue = result.display?.value ?? result.multiplier;
+    await this.finalize(ctx.session, ctx.bet, result, displayValue, win);
+  }
+
   /* ----------------------------- shared finalize -------------------------- */
 
   /** Settlement → credit → history → analytics → notifications, in the fixed order. */
@@ -236,7 +373,9 @@ export class GameRuntime {
       this.bus.emit(RuntimeEventName.SETTLEMENT_FAILED, { error: e }, { sessionId: session.sessionId, roundId: result.roundId });
       throw e;
     }
-    if (win && Number(betResult.payout) > 0) {
+    // Credit event fires whenever money moved (win, push, refund, bonus) — the
+    // outcome type comes from the settlement provider, not a win/loss assumption.
+    if (Number(betResult.payout) > 0) {
       this.bus.emit(RuntimeEventName.WALLET_CREDITED, { amount: betResult.payout, balanceAfter: betResult.balanceAfter }, { sessionId: session.sessionId, roundId: result.roundId });
     }
     this.sessions.settle(result.roundId);
@@ -245,12 +384,13 @@ export class GameRuntime {
     // History (delegates to demo stores → keeps existing UI surfaces in sync).
     // Presentation (label/value) and XP are game-supplied so non-multiplier games
     // (dice roll, roulette pocket, card total) keep their exact history surface;
-    // absent, the runtime falls back to the multiplier (crash is unchanged).
+    // absent, the runtime falls back to the multiplier (crash is unchanged). The
+    // outcome is taken from settlement so push/refund/bonus are recorded faithfully.
     const game = this.games.get(bet.gameId);
     const rewards = game?.config.rewards as { winXp?: number; lossXp?: number } | undefined;
     const record: DemoHistoryRecord = {
       ...betResult,
-      outcome: win ? BetOutcome.Win : BetOutcome.Loss,
+      outcome: betResult.outcome,
       playerId: session.playerId,
       gameId: bet.gameId,
       gameName: game?.name,
@@ -258,6 +398,8 @@ export class GameRuntime {
       displayValue: result.display?.value ?? displayValue,
       multiplier: creditMultiplier ?? betResult.multiplier,
       xp: rewards ? (win ? rewards.winXp ?? 40 : rewards.lossXp ?? 12) : undefined,
+      settlementType: result.settlement?.type,
+      reason: result.settlement?.reason,
     };
     await this.providers.history.record(record);
     this.bus.emit(RuntimeEventName.HISTORY_UPDATED, { record }, { sessionId: session.sessionId, roundId: result.roundId });

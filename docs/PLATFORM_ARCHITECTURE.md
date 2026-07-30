@@ -275,3 +275,82 @@ redesign, no service rewrites, no file relocations. Existing gameplay is unchang
 **Next (Phase 2.2):** implement `IGameRuntime` + a demo and real provider set, and migrate one
 reference game (Crash or Dice) end-to-end onto the runtime to prove the path before the wider
 game expansion.
+
+## 14. Interactive runtime & flexible settlement (Phase 2.3C)
+
+The runtime completed two **generic, additive** capabilities so multi-step games and
+non-multiplicative payouts run on the same core. The runtime still knows **no game rules** — it
+owns the state machine and stores opaque state; engines decide transitions and payouts.
+
+### 14.1 Interactive engine
+
+An engine implements **exactly one** shape (both optional on `RuntimeGameEngine` / `IGameEngine`):
+
+- **Single-shot** — `createRound(input) → IGameResult` (crash, dice, roulette, plinko).
+- **Interactive** — `start(input) → IStepResult` and `step(input + gameState + action) → IStepResult`.
+
+`IStepResult` = `{ state: RuntimeState; gameState; availableActions?; settlement?; display? }`.
+`gameState` is **opaque** to the runtime; the UI renders it. When `state === Completed`, the engine
+MUST include a `settlement` (see 14.3).
+
+### 14.2 State machine
+
+`RuntimeState`: `Waiting → Running → AwaitingPlayer → AwaitingSystem → Completed | Cancelled | Expired`.
+The runtime drives it:
+
+- `startInteractive(bet)` → validate → **debit** → `engine.start` → store state → emit `STEP_STARTED`
+  + `STATE_CHANGED`. If the engine completes on start, it settles immediately.
+- `submitAction({ roundId, action })` → routes a generic `PlayerAction { type, payload? }` to
+  `engine.step`; the **engine** decides legality (throws to reject). Emits `PLAYER_ACTION` →
+  `STEP_COMPLETED` → `STATE_CHANGED`; on `Completed`, settles.
+- `getStep(roundId)` → current `{ state, gameState }`.
+- `cancelInteractive({ roundId })` → refund the stake + `Cancelled`.
+- An action past the session idle window → `Expired` (`SESSION_EXPIRED`).
+
+Guards: unknown round → `ROUND_NOT_FOUND`; action after terminal → `ROUND_ALREADY_SETTLED`.
+
+### 14.3 Flexible settlement model
+
+`ISettlementResult` replaces the `stake × multiplier` assumption:
+
+```
+{ type: SettlementType; payout: Money; refund?: Money; bonus?: Money;
+  multiplier?: number; metadata?; display?; reason? }
+```
+
+`SettlementType` = `Win | Loss | Push | Refund | Bonus | Jackpot | Custom`. The settlement provider
+credits `payout + refund + bonus`, maps `type` (+ net for `Custom`) to the canonical `BetOutcome`,
+and carries `metadata` through to history. **Absent** `settlement` → the legacy multiplicative path
+(crash/dice/roulette/plinko unchanged). Single-shot engines may also emit `result.settlement` for
+absolute payouts (jackpots, bonuses) via the normal `placeBet` path.
+
+New generic events (additive; no renames): `STEP_STARTED`, `STEP_COMPLETED`, `PLAYER_ACTION`,
+`STATE_CHANGED`, `SETTLEMENT_UPDATED`.
+
+### 14.4 Card-game integration guide (interactive)
+
+1. Write a pure engine with `start` (deal → `AwaitingPlayer`, `availableActions`) and `step`
+   (validate the action; on a terminal move return `Completed` + an `ISettlementResult`; else the
+   next `AwaitingPlayer`/`AwaitingSystem` state). Derive randomness from the injected
+   `rng.nextFloat` (vary `clientSeed` by draw index for reproducibility).
+2. Register `{ engine, descriptor }` in `src/games/registry.ts` (descriptor `rewards` for XP).
+3. In the component: `startInteractive(bet)` on play; render `step.gameState`; wire buttons to
+   `submitAction({ roundId, action: { type } })`; the runtime settles on `Completed`.
+
+Reference: `src/runtime/testing/mock-engines.ts::MockCardEngine` (proof only — not a real game).
+
+### 14.5 Slot integration guide (flexible settlement)
+
+A slot is single-shot: `createRound` returns `IGameResult` with a `settlement` of type `Win` /
+`Jackpot` / `Bonus` (absolute `payout` + `bonus`, plus `metadata` like `{ jackpot: true }`), or
+`Loss`. The component drives it with `startRound` → animate → `cashOut`/`finishRound`, or
+`placeBet` for an instant reveal. Per-round game naming (each slot title) remains a follow-up if a
+single `slots` descriptor is insufficient. Reference:
+`src/runtime/testing/mock-engines.ts::MockSlotEngine`.
+
+### 14.6 Backward compatibility
+
+All Phase 2.3C changes are additive: optional contract fields (`IGameResult.settlement`,
+`IBetResult.metadata`), optional engine methods, appended enum members, and new runtime methods.
+Crash, Dice, Roulette and Plinko are unchanged and verified by the existing suite (199 tests green,
+runtime coverage ≥ Phase 2.3A thresholds).

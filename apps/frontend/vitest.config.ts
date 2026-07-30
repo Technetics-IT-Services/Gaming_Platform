@@ -33,6 +33,7 @@ export default defineConfig({
         'src/runtime/**/*.test.ts',
         'src/runtime/react/**', // React binding — covered by e2e, needs DOM
         'src/runtime/index.ts', // singleton wiring — exercised via integration tests
+        'src/runtime/testing/**', // reference mock engines — proof scaffolding, not product
       ],
       // Phase 2.3A quality targets. CI fails if runtime coverage regresses below these.
       thresholds: {

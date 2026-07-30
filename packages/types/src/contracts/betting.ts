@@ -85,6 +85,46 @@ export interface IBetResult {
   /** Wallet balance after settlement, when the wallet provider reports it. */
   balanceAfter?: Money;
   settledAt: Timestamp;
+  /** Free-form, game-defined settlement metadata (Phase 2.3C) — never interpreted
+   * by the runtime; carried through to history for display/audit. */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Flexible settlement outcome (Phase 2.3C).
+ *
+ * Generalises the `stake × multiplier` assumption so any game can settle in the
+ * shared way: full/partial win, push, refund, bonus, jackpot, or a fully custom
+ * payout. The runtime stays game-agnostic — it credits `payout + refund + bonus`
+ * and records `type` + `metadata`, never interpreting game rules.
+ */
+export enum SettlementType {
+  Win = 'win',
+  Loss = 'loss',
+  Push = 'push',
+  Refund = 'refund',
+  Bonus = 'bonus',
+  Jackpot = 'jackpot',
+  /** Anything else; the runtime derives the outcome from the net credited. */
+  Custom = 'custom',
+}
+
+export interface ISettlementResult {
+  type: SettlementType;
+  /** Absolute amount credited from the outcome (0 on a loss). */
+  payout: Money;
+  /** Stake returned to the player (push / refund). */
+  refund?: Money;
+  /** Extra credited on top (bonus pool, jackpot, tournament reward…). */
+  bonus?: Money;
+  /** Optional effective multiplier — presentation / back-compat only. */
+  multiplier?: number;
+  /** Free-form, game-defined (e.g. `{ jackpot: true, freeSpins: 5 }`). */
+  metadata?: Record<string, unknown>;
+  /** Presentation hint for history/stats (label + numeric value). */
+  display?: { label?: string; value?: number };
+  /** Human-readable reason (e.g. "dealer bust", "three sevens"). */
+  reason?: string;
 }
 
 /** In-round cash-out (crash-style games and any future cashable round). */

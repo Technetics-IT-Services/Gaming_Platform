@@ -28,6 +28,10 @@ export type DemoHistoryRecord = IBetResult & {
   displayValue?: number;
   /** XP to award for this round (game-supplied via the descriptor's rewards). */
   xp?: number;
+  /** Generic settlement metadata (Phase 2.3C) — carried for display/audit; the
+   * demo store only surfaces label/value, a real backend persists these. */
+  settlementType?: string;
+  reason?: string;
 };
 
 export class DemoHistoryProvider implements IGameHistoryProvider {
