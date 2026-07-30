@@ -6,41 +6,33 @@ import { Cat, Flame, RotateCcw, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
+
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { PlayingCard } from '@/components/card/playing-card';
-import { createDeck, rankValue, shuffle, type Card } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { DT_PAYOUT, type DTSide, type DTState } from '@/games/cards/dragon-tiger-engine';
+import type { Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { useGameStat } from '@/stores/game-stats';
 
 const SLUG = 'dragon-tiger';
 
-type BetSide = 'dragon' | 'tiger' | 'tie';
-type Winner = BetSide;
+type BetSide = DTSide;
 
-const PAYOUT: Record<BetSide, number> = { dragon: 2, tiger: 2, tie: 9 };
+const PAYOUT = DT_PAYOUT;
 const CHIPS = [100, 500, 1000, 5000] as const;
 
-interface Outcome {
-  dragon: Card;
-  tiger: Card;
-  winner: Winner;
-}
-
-function resolve(seed: number): Outcome {
-  const shoe = shuffle(createDeck(6), seed);
-  const dragon = shoe[0] ?? 'AS';
-  const tiger = shoe[1] ?? 'KH';
-  const dv = rankValue(dragon);
-  const tv = rankValue(tiger);
-  const winner: Winner = dv > tv ? 'dragon' : tv > dv ? 'tiger' : 'tie';
-  return { dragon, tiger, winner };
-}
+type Outcome = DTState;
 
 type Phase = 'idle' | 'dealing' | 'result';
 
 export function DragonTigerGame() {
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime(SLUG);
   const balance = useDemoWallet((s) => s.balance);
   const stat = useGameStat(SLUG);
 
@@ -53,10 +45,10 @@ export function DragonTigerGame() {
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
   const timers = useRef<number[]>([]);
-  const seedRef = useRef(1);
   const fxKeyRef = useRef(0);
   const stakeRef = useRef(0);
   const sideRef = useRef<BetSide>('dragon');
+  const pendingRef = useRef(false);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -64,33 +56,25 @@ export function DragonTigerGame() {
   }, []);
   useEffect(() => clearTimers, [clearTimers]);
 
-  const finish = useCallback((o: Outcome) => {
-    const s = sideRef.current;
-    const stake = stakeRef.current;
-    const win = o.winner === s;
-    const multiplier = win ? PAYOUT[s] : 0;
-    const label = `${o.winner[0]!.toUpperCase()}${o.winner.slice(1)}`;
-
-    const { net } = settleRound({
-      game: SLUG,
-      stake,
-      win,
-      multiplier,
-      label: o.winner === 'tie' ? 'Tie' : label,
-      value: win ? multiplier : 0,
-    });
-
-    setResult({ win, net });
-    if (win) {
-      fxKeyRef.current += 1;
-      setFx({ key: fxKeyRef.current, type: 'win', amount: net });
-    }
-    setPhase('result');
-  }, []);
+  /** Present the outcome + settle through the Runtime (win → cashOut, loss → finish). */
+  const finish = useCallback(
+    (roundId: string, win: boolean, mult: number, stake: number) => {
+      const net = win ? Math.round(stake * mult) - stake : -stake;
+      setResult({ win, net });
+      if (win) {
+        fxKeyRef.current += 1;
+        setFx({ key: fxKeyRef.current, type: 'win', amount: net });
+      }
+      sound.play(win ? 'reward' : 'lose');
+      setPhase('result');
+      if (win) void runtime.cashOut({ roundId, atMultiplier: mult }).catch(() => {});
+      else void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
+    },
+    [runtime],
+  );
 
   const run = useCallback(
-    (seed: number) => {
-      const o = resolve(seed);
+    (o: Outcome, roundId: string, win: boolean, mult: number, stake: number) => {
       setOutcome(o);
       setResult(null);
       setReveal({ dragon: false, tiger: false });
@@ -108,32 +92,50 @@ export function DragonTigerGame() {
           sound.play('cardFlip');
         }, 900),
       );
-      timers.current.push(window.setTimeout(() => finish(o), 1400));
+      timers.current.push(window.setTimeout(() => finish(roundId, win, mult, stake), 1400));
     },
     [finish],
   );
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      if (phase === 'dealing') return;
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — hit reload in the balance pill.');
-        return;
-      }
-      clearTimers();
-      const seed =
-        replaySeed ?? ((Math.floor(performance.now() * 1000) ^ (stat.seq * 2654435761)) >>> 0);
-      seedRef.current = seed >>> 0;
-      stakeRef.current = stake;
-      sideRef.current = side;
+  const deal = useCallback(() => {
+    if (phase === 'dealing' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — hit reload in the balance pill.');
+      return;
+    }
+    clearTimers();
+    stakeRef.current = stake;
+    sideRef.current = side;
+    pendingRef.current = true;
 
-      useDemoWallet.getState().spend(stake);
-      sound.play('chips');
-      run(seedRef.current);
-    },
-    [phase, bet, balance, side, stat.seq, run, clearTimers],
-  );
+    const betReq: IBetRequest<DTSide> = {
+      gameId: SLUG,
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: side }],
+      idempotencyKey: `${SLUG}:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    sound.play('chips');
+    // Runtime: validate → debit → engine (provably-fair deal). UI reveals to it.
+    void runtime
+      .startRound<DTState>(betReq)
+      .then(({ result, roundId }) => {
+        run(result.state, roundId, result.win, result.multiplier, stake);
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, side, stat.seq, runtime, run, clearTimers]);
 
   const winner = phase === 'result' ? outcome?.winner : undefined;
 
@@ -306,8 +308,8 @@ export function DragonTigerGame() {
               <Button
                 variant="glass"
                 size="lg"
-                onClick={() => deal(seedRef.current)}
-                title="Replay same round"
+                onClick={() => deal()}
+                title="Deal again"
               >
                 <RotateCcw className="h-5 w-5" />
               </Button>

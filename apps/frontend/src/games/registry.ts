@@ -16,9 +16,22 @@ import type { RuntimeGameEngine } from '@/runtime/engine-registry';
 import { CRASH_CONFIG, CrashEngine } from '@/runtime/engines/crash-engine';
 import type { GameRegistration } from '@/runtime/game-runtime';
 
+import { DragonTigerEngine } from './cards/dragon-tiger-engine';
 import { DiceEngine, DICE_CONFIG } from './dice-engine';
 import { RouletteEngine } from './roulette-engine';
 import { PlinkoEngine, PLINKO_CONFIG } from './plinko-engine';
+
+/** Single-shot reveal games (deal → animate → settle) share these capabilities. */
+const REVEAL_CAPS: GameModule['descriptor']['capabilities'] = {
+  cashOut: false,
+  autoBet: false,
+  multiBet: false,
+  provablyFair: true,
+  realtime: false,
+  multiplayer: false,
+  liveDealer: false,
+  tournament: false,
+};
 
 /** A registrable game = its engine + its descriptor. */
 export interface GameModule {
@@ -115,6 +128,18 @@ export const GAME_MODULES: GameModule[] = [
         tournament: false,
       },
       config: { ...PLINKO_CONFIG, minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new DragonTigerEngine(),
+    descriptor: {
+      gameId: 'dragon-tiger',
+      // Lowercase to preserve the exact legacy bet-ledger + stats key (was `game: SLUG`).
+      name: 'dragon-tiger',
+      engineKey: 'dragon-tiger',
+      category: 'card',
+      capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
     },
   },
 ];
