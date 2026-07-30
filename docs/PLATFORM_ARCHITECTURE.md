@@ -490,3 +490,69 @@ wallet, RNG, or settlement:
   with `aspect-square` cells; `max-w` caps keep the stage centred on desktop.
 - **Performance**: each game is a `next/dynamic` lazy chunk; game state lives in the runtime for
   interactive rounds (the UI holds only view state); no per-frame React state in hot paths.
+
+## 18. Production ledger & wallet (Phase 5A)
+
+The demo financial layer is now backed by a **production-grade double-entry ledger** — the single
+financial source of truth. **Zero platform change**: the Runtime, providers used by games, engines,
+registry, settlement flow, event bus and session manager are untouched; money still flows
+**Game → Runtime → Wallet Provider → `useDemoWallet` → Ledger**.
+
+### 18.1 Ledger architecture (`src/lib/ledger/`)
+
+Framework-agnostic TS (no React/store) so it lifts to a backend unchanged.
+
+- **`LedgerEntry`** — one side of a transaction on one account: `direction` (credit/debit),
+  `amount` (positive integer minor units — never a float), `balanceBefore`/`balanceAfter` (audit).
+- **`Transaction`** — a balanced set of entries (Σ credits === Σ debits), the atomic movement,
+  tagged with `type`, `status`, `reference`, `reason`, `actor`, `idempotencyKey`, `correlationId`,
+  `gameId`, `roundId`, `metadata`, `reversalOf`.
+- **`Ledger`** — append-only entries + transactions; `post()` validates balance + amounts, guards
+  per-account negatives (system accounts exempt), and dedupes on `idempotencyKey` (exactly-once).
+  **Balances are derived** (`balanceOf` is a re-derivable cache; `deriveBalance` replays entries;
+  `reconcile()` proves cached === replayed and the system sum is 0). `history()` paginates/filters;
+  `snapshot()`/`hydrate()` persist.
+
+Accounts: `player:{id}:wallet` (spendable), `:locked` (reserved), `:vault` (savings), `house:main`
++ `external:world` (system counterparties that may go negative — they mirror total player liability).
+
+### 18.2 Wallet architecture (`WalletService`)
+
+The money API over the ledger: `createWallet`, `getBalance` (available/locked/total), `credit`,
+`debit` (negative-guarded), `transfer`, `reserve`/`release`, `rollback` (posts the mirror image),
+`history`, `reconcile`. Every operation is idempotent on its key and retry-safe.
+
+### 18.3 Transaction model & flow
+
+`TransactionType`: Deposit, Withdrawal, Bet, Win, Refund, Adjustment, Bonus, Promotion,
+ManualCredit, ManualDebit, Jackpot, Transfer, Reserve, Release, Reversal. Each movement posts a
+balanced pair (player account ↔ house/external). A bet: `debit player:wallet` + `credit house`; a
+win: `credit player:wallet` + `debit house`; a deposit: `credit wallet` + `debit external`.
+
+### 18.4 Idempotency, concurrency, audit
+
+- **Idempotency**: `post()` returns the existing transaction for a repeated `idempotencyKey` —
+  exactly-once. A duplicate settlement retry credits once. (In a DB: a unique index on the key.)
+- **Concurrency**: single-threaded here, but the two-phase project→guard→commit + idempotency give
+  retry safety and prevent double-spend/overdraw. (In a DB: a row `version` / `SELECT … FOR
+  UPDATE`, mapped from this design.)
+- **Audit**: every entry carries before/after balances; every transaction carries who (`actor`),
+  when (`at`), why (`reason`/`reference`), correlation/game/round ids, and metadata.
+
+### 18.5 Migration (STEP 9)
+
+`src/stores/wallet-ledger.ts` holds the authoritative session `WalletService`, seeded once from the
+restored balance. `useDemoWallet`'s money actions **mirror** every movement into it; the store's
+`balance` projection is reconciled to the ledger (`reconcileWallet`) and stays byte-identical, so
+the demo casino behaves exactly as before while the ledger is the source of truth. The store's
+public API is unchanged — the wallet provider, history provider and UI need no changes.
+
+### 18.6 Database model & future payment integration points
+
+Lift-to-backend mapping: `ledger_accounts`, `ledger_entries` (append-only, indexed by
+`account`,`transaction_id`,`at`), `transactions` (unique on `idempotency_key`). Balances are a
+materialized view / running total re-derivable from entries. **Payment integration points (later
+phases, NOT implemented here):** Deposit/Withdrawal transaction types are placeholders where a
+gateway (Razorpay/Stripe/Cashfree/PhonePe/UPI) would post the `external:world` leg after
+provider confirmation; KYC/withdrawal-approval gate the `Withdrawal` posting. None of that exists
+yet — this phase delivers only the ledger + wallet foundation.
