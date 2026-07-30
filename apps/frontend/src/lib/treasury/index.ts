@@ -9,4 +9,4 @@
 export * from './types';
 export { WITHDRAWAL_TRANSITIONS, canTransition, assertTransition, TransitionError } from './state-machine';
 export { TreasuryEngine, type TreasuryOpts } from './treasury-engine';
-export { WithdrawalService, WithdrawalError, type WithdrawalServiceOptions } from './withdrawal-service';
+export { WithdrawalService, WithdrawalError, type WithdrawalServiceOptions, type WithdrawalDecisionGate } from './withdrawal-service';

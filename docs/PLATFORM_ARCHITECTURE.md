@@ -698,5 +698,94 @@ protection), and an audit record on every action carrying **no** sensitive data.
 
 To add a payout rail: implement `IPayoutGateway.payout(...)` (returns `{ok, reference?, reason?}`)
 and inject it into `WithdrawalService` — exactly like the deposit port. Nothing else changes; the
-ledger, wallet, treasury, runtime and games are untouched. **Not implemented (by design):** KYC,
-AML, fraud detection, device fingerprinting, risk scoring, and any finance/admin/partner portal UI.
+ledger, wallet, treasury, runtime and games are untouched. Risk/compliance gating arrived in Phase
+5D (§21); the Phase 5C service exposes an optional hook for it.
+
+## 21. Risk, compliance & fraud platform (Phase 5D)
+
+A **provider-agnostic** Risk & Compliance Platform sits between the Withdrawal Service and the
+Treasury Engine: `Withdrawal Service → Risk & Compliance → Treasury Engine`. **Risk evaluates;
+Treasury executes.** The platform makes decisions and **never moves money** — money movement stays
+with the Treasury Engine + Ledger. **Zero platform change**: nothing under `src/runtime/**`, the
+game engines, registry, game providers, settlement, event bus, session manager, ledger, treasury
+*accounting* (`treasury-engine.ts`), or payment platform is modified. The treasury integration is a
+single **optional, additive** hook. Module: `src/lib/compliance/` (framework-agnostic TS).
+
+### 21.1 Decision engine (STEP 1)
+
+`DecisionEngine` aggregates the policy reasons + resolved signals into one `DecisionResult`
+(`action`, `allowed`, `reasons`, `riskScore`, `signals`). Actions, by severity: **Approve <
+ManualReview < Hold < Escalate < Reject** — the most severe fired reason wins; none ⇒ Approve. Only
+`allowed === true` (Approve) lets Treasury proceed. Pure + deterministic; the aggregate 0–100
+`riskScore` is dominated by the worst signal, nudged by the rest.
+
+### 21.2 Policy engine (STEP 2)
+
+`PolicyEngine` is a runtime registry of data-driven `DecisionRule`s (`set`/`remove`/`toggle`), so
+new policy ships as configuration, not code. `defaultPolicyRules(config)` provides a
+production-representative set — KYC-required-for-withdrawal, AML sanctions/watchlist/PEP,
+high-value manual review (VIP-exempt), restricted jurisdictions, high fraud score, velocity
+exceeded, untrusted device, business hours, responsible-gaming cap — every threshold a parameter.
+
+### 21.3 KYC framework (STEP 3)
+
+`IKYCProvider` adapters behind `KYCService`, which caches the latest `KYCResult`
+(`VerificationStatus`/`DocumentStatus`/`IdentityStatus`/level) per player so the **synchronous**
+decision path reads a status without an inline call. `MockKYCProvider` only — no real credentials.
+
+### 21.4 AML framework (STEP 4)
+
+`IAMLProvider` adapters behind `AMLService`; screening yields `SanctionsCheck` + `PEPCheck` +
+`WatchlistCheck` → `RiskFlag[]` + `RiskLevel`, cached per player. `MockAMLProvider` seeds hits +
+high-risk jurisdictions deterministically. Adapters only — no external API credentials.
+
+### 21.5 Fraud framework (STEP 5)
+
+`FraudEngine` blends configurable-weight `FraudSignal`s into a 0–100 `FraudScore`: velocity, rapid
+deposits/withdrawals, duplicate accounts (shared device/IP), bad device reputation, unusual bet
+patterns, and an **impossible-travel** hook (distinct recent countries). A `FraudModel` interface is
+the explicit **future-ML integration point** — a model contributes additional weighted signals.
+
+### 21.6 Device trust (STEP 6)
+
+`DeviceTrustService` fronts `IDeviceTrustProvider` (IP reputation / VPN / Tor / proxy hooks) and a
+trusted-device registry, deriving a `DeviceRisk` band (Trusted/Unknown/Suspicious/Blocked — Tor is
+blocked, VPN/proxy/low-rep is suspicious). `DeviceFingerprint` carries a browser-fingerprint hash
+hook. `MockDeviceProvider` only.
+
+### 21.7 Geofencing (STEP 7)
+
+`GeoService` classifies a `GeoSignal` into `GeoStatus` (Allowed/Restricted/Blocked/Unknown) against
+configurable blocked-countries, allow-lists, and per-country restricted states, plus a
+timezone-consistency hook (a coarse location-spoof heuristic). Optional `IGeoProvider` IP lookup.
+
+### 21.8 Velocity controls (STEP 8)
+
+`VelocityControls` keeps rolling-window counters per player + `VelocityKind` (deposits, withdrawals,
+failed attempts, logins, device changes, IP changes), pruned to the widest window. All limits are
+configuration; an injectable clock keeps it testable.
+
+### 21.9 Compliance audit (STEP 9)
+
+`ComplianceAudit` append-only-records **every** decision: action, reasons (rule codes), risk score,
+KYC/AML/fraud/device/geo status, timestamp, actor, correlation id — queryable by
+player/correlation/action/operation/date. 100% audit coverage (one record per decision).
+
+### 21.10 Treasury integration (STEP 10)
+
+`ComplianceService` is the facade: `decide(ctx)` is **synchronous** over cached provider snapshots +
+the sync engines (so the Withdrawal Service gates inline without changing its signature);
+`evaluate(ctx)` is the async full path that refreshes providers first. The Withdrawal Service takes
+an **optional** `decisionGate` and calls `decideWithdrawal(...)` **before** reserving funds — on any
+non-Approve it throws `COMPLIANCE_BLOCKED` and **no ledger posting occurs** (Approve ⇒ Treasury
+reserves; Reject/Hold/ManualReview/Escalate ⇒ Treasury stops). The gate is declared structurally in
+the treasury layer, so neither module imports the other. With no gate wired, behavior is byte-
+identical to Phase 5C (all 287 prior tests stay green).
+
+### 21.11 Integration & extension guide
+
+Compose the platform with `ComplianceService.create(config)` (mock providers + default policy) or
+wire the parts directly. To go to production: swap each `Mock*Provider` for a real adapter
+(implementing `IKYCProvider`/`IAMLProvider`/`IDeviceTrustProvider`/`IGeoProvider`), tune the policy
+config, and register a `FraudModel`. Nothing in the runtime, games, ledger, treasury accounting, or
+payment platform changes. **Not implemented (by design):** any Finance/Admin/Partner portal UI.

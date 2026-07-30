@@ -29,13 +29,27 @@ import {
 
 export class WithdrawalError extends Error {
   constructor(
-    readonly code: 'INVALID_REQUEST' | 'NOT_FOUND' | 'LIMIT_EXCEEDED' | 'INSUFFICIENT_FUNDS' | 'FORBIDDEN' | 'RATE_LIMITED',
+    readonly code: 'INVALID_REQUEST' | 'NOT_FOUND' | 'LIMIT_EXCEEDED' | 'INSUFFICIENT_FUNDS' | 'FORBIDDEN' | 'RATE_LIMITED' | 'COMPLIANCE_BLOCKED',
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'WithdrawalError';
   }
+}
+
+/**
+ * Optional risk & compliance gate (Phase 5D integration). The Risk platform
+ * implements this; only `allowed === true` lets Treasury proceed to reserve funds.
+ * Declared structurally here so the treasury layer stays decoupled from the
+ * compliance module (no import in either direction). Money never moves on a block.
+ */
+export interface WithdrawalDecisionGate {
+  decideWithdrawal(input: { playerId: string; amount: number; currency: string; correlationId: string }): {
+    allowed: boolean;
+    action: string;
+    reasons?: { message: string }[];
+  };
 }
 
 /** Statuses that still hold or have spent player funds (count toward daily limit). */
@@ -54,6 +68,8 @@ export interface WithdrawalServiceOptions {
   limits: WithdrawalLimits;
   authorizer?: Authorizer;
   rateLimiter?: RateLimiter;
+  /** Optional Phase 5D risk & compliance gate — consulted before funds are reserved. */
+  decisionGate?: WithdrawalDecisionGate;
   clock?: () => number;
 }
 
@@ -65,6 +81,7 @@ export class WithdrawalService {
   private readonly limits: WithdrawalLimits;
   private readonly authorize: Authorizer;
   private readonly rateLimiter: RateLimiter;
+  private readonly decisionGate?: WithdrawalDecisionGate;
   private seq = 0;
 
   constructor(
@@ -76,6 +93,7 @@ export class WithdrawalService {
     this.limits = opts.limits;
     this.authorize = opts.authorizer ?? (() => true);
     this.rateLimiter = opts.rateLimiter ?? (() => true);
+    this.decisionGate = opts.decisionGate;
     this.clock = opts.clock ?? (() => Date.now());
   }
 
@@ -130,10 +148,21 @@ export class WithdrawalService {
       if (existing) return this.get(existing);
     }
     this.validate(req);
+    const correlationId = req.correlationId ?? this.secureId('corr');
+
+    // Risk & Compliance evaluates BEFORE any money moves (Phase 5D). A non-approval
+    // stops here — nothing is reserved, no reference number is consumed.
+    if (this.decisionGate) {
+      const decision = this.decisionGate.decideWithdrawal({ playerId: req.playerId, amount: req.amount, currency: req.currency, correlationId });
+      if (!decision.allowed) {
+        this.log({ action: 'compliance_blocked', correlationId, detail: `${decision.action}: ${(decision.reasons ?? []).map((r) => r.message).join('; ')}` });
+        throw new WithdrawalError('COMPLIANCE_BLOCKED', `Withdrawal blocked by compliance (${decision.action}).`, { action: decision.action, reasons: decision.reasons });
+      }
+    }
+
     const now = this.clock();
     this.seq += 1;
     const id = this.secureId('wd');
-    const correlationId = req.correlationId ?? this.secureId('corr');
     const reserveTx = this.wallet.reserve(req.playerId, req.amount, {
       type: TransactionType.Reserve,
       reference: id,
