@@ -1,12 +1,15 @@
 'use client';
 
 import { Badge, Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest } from '@gaming-platform/types';
+import { BetMode } from '@gaming-platform/types';
 import { ChevronLeft, Coins, Crown, Minus, Plus, RotateCw, Volume2, Zap } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AnimatedNumber } from '@/components/marketing/animated-number';
-import { settleRound } from '@/lib/game-result';
+import { REELS, ROWS, STRIP, SYMBOLS, type SlotsPick, type SlotsState, buildStrip, fnv } from '@/games/slots-engine';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
 
 /**
@@ -23,47 +26,9 @@ import { useDemoWallet } from '@/stores/demo-wallet';
  * bet-history entry per round. The jackpot pool is a cosmetic demo counter.
  */
 
-const SYMBOLS = [
-  { char: '🍒', pay: 4, label: 'Cherry' },
-  { char: '🍋', pay: 5, label: 'Lemon' },
-  { char: '🔔', pay: 8, label: 'Bell' },
-  { char: '⭐', pay: 12, label: 'Star' },
-  { char: '💎', pay: 25, label: 'Diamond' },
-  { char: '7️⃣', pay: 50, label: 'Seven' },
-] as const;
-
-const ROWS = 3;
-const STRIP = 32; // symbols per reel strip
+// Reel strips, symbols, and RNG helpers live in the shared slots engine.
 const CELL = 92; // px per symbol cell
-const REELS = 3;
 const BETS = [5, 10, 25, 50, 100] as const;
-
-function fnv(input: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** Deterministic PRNG — same seed → same stream. No global RNG. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** A stable per-reel strip of symbol indices, derived from the slug. */
-function buildStrip(slug: string, reel: number): number[] {
-  const rnd = mulberry32(fnv(`${slug}::reel::${reel}`));
-  return Array.from({ length: STRIP }, () => Math.floor(rnd() * SYMBOLS.length));
-}
 
 interface SlotDemoProps {
   slug: string;
@@ -80,8 +45,10 @@ export function SlotDemo({ slug, title, lobbyHref = '/games', detailHref }: Slot
   // Start each reel showing a stable window (offset 1 → middle row = strip[1]).
   const [offsets, setOffsets] = useState<number[]>(() => strips.map(() => 1));
   const [spinning, setSpinning] = useState(false);
+  // The Runtime owns bet/RNG/settlement/history; the UI only renders + collects
+  // intent. Demo providers delegate to these same stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('slots');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
   const [betIndex, setBetIndex] = useState(1);
   const [jackpot, setJackpot] = useState(() => 25_000 + (fnv(slug) % 50_000));
   const [lastWin, setLastWin] = useState<number | null>(null);
@@ -95,63 +62,66 @@ export function SlotDemo({ slug, title, lobbyHref = '/games', detailHref }: Slot
 
   const spin = useCallback(() => {
     if (spinning) return;
+    if (!session) {
+      setMessage('Starting session… try again in a moment.');
+      return;
+    }
     if (balance < bet) {
       setMessage('Not enough balance — deposit or lower your bet');
       return;
     }
     setSpinning(true);
     setLastWin(null);
-    spend(bet); // deduct the stake from the shared wallet (records a Bet txn)
     setMessage('Spinning…');
-
-    // Deterministic target per reel from a per-spin seed.
     spinCount.current += 1;
-    const rnd = mulberry32(fnv(`${slug}::spin::${spinCount.current}`));
-    const targets = strips.map(() => {
-      // Land within a safe window so a full 3-row view is always valid.
-      return 1 + Math.floor(rnd() * (STRIP - ROWS - 1));
-    });
 
-    const settle = () => {
-      setOffsets(targets);
-      const results = targets.map((o, r) => strips[r]![(o + 1) % STRIP]!);
-      const [a, b, c] = results as [number, number, number];
-      let win = 0;
-      let label = 'No win';
-      if (a === b && b === c) {
-        win = SYMBOLS[a]!.pay * bet;
-        if (SYMBOLS[a]!.char === '7️⃣') {
-          // Jackpot line.
-          win += jackpot;
-          setJackpot(25_000 + (fnv(`${slug}${spinCount.current}`) % 50_000));
-          setMessage(`🎉 JACKPOT — ${SYMBOLS[a]!.label} × ${REELS}!`);
-          label = 'Jackpot!';
-        } else {
-          setMessage(`Win! Three ${SYMBOLS[a]!.label}s`);
-          label = `Three ${SYMBOLS[a]!.label}s`;
-        }
-      } else if (a === b || b === c || a === c) {
-        win = Math.round(bet * 1.5);
-        setMessage('Nice — a matching pair');
-        label = 'Matching pair';
-      } else {
-        setMessage('No win — spin again');
-      }
-      setJackpot((j) => j + Math.round(bet * 0.25));
-      if (win > 0) setLastWin(win);
-      // Credit winnings + record the Win txn, bet history, XP, stats and SFX —
-      // exactly like every other casino game. Stake was already spent above.
-      settleRound({ game: title, stake: bet, win: win > 0, winnings: win, label });
-      setSpinning(false);
+    const betReq: IBetRequest<SlotsPick> = {
+      gameId: 'slots',
+      sessionId: session.sessionId,
+      stake: { amount: String(bet), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: { slug, jackpot } }],
+      idempotencyKey: `slots:${slug}:${session.sessionId}:${spinCount.current}:${bet}`,
+      clientSeed: 'demo',
+      // Per-round history identity → the ledger + stats key by the slot title.
+      metadata: { gameName: title, statsKey: title },
     };
 
-    if (reduced) {
-      settle();
-    } else {
-      // Let the CSS reel transition play, then resolve.
-      window.setTimeout(settle, 1150);
-    }
-  }, [bet, balance, spend, jackpot, reduced, slug, spinning, strips, title]);
+    // Runtime: validate → debit → engine (provably-fair reels). UI spins to it.
+    void runtime
+      .startRound<SlotsState>(betReq)
+      .then(({ result, roundId }) => {
+        const { targets, results, win, isJackpot } = result.state;
+        const settle = () => {
+          setOffsets(targets);
+          const [a, b, c] = results as [number, number, number];
+          if (a === b && b === c) {
+            if (isJackpot) {
+              setJackpot(25_000 + (fnv(`${slug}${spinCount.current}`) % 50_000));
+              setMessage(`🎉 JACKPOT — ${SYMBOLS[a]!.label} × ${REELS}!`);
+            } else {
+              setMessage(`Win! Three ${SYMBOLS[a]!.label}s`);
+            }
+          } else if (a === b || b === c || a === c) {
+            setMessage('Nice — a matching pair');
+          } else {
+            setMessage('No win — spin again');
+          }
+          setJackpot((j) => j + Math.round(bet * 0.25));
+          if (win > 0) setLastWin(win);
+          // Runtime settles: credit + bet-history + stats + XP (label = the win kind).
+          if (result.win) void runtime.cashOut({ roundId, atMultiplier: result.multiplier }).catch(() => {});
+          else void runtime.finishRound({ roundId, finalMultiplier: 0 }).catch(() => {});
+          setSpinning(false);
+        };
+        if (reduced) settle();
+        else window.setTimeout(settle, 1150); // let the CSS reel transition play
+      })
+      .catch(() => {
+        setSpinning(false);
+        setMessage('Spin failed — try again');
+      });
+  }, [bet, balance, session, jackpot, reduced, slug, spinning, title, runtime]);
 
   // Space to spin.
   useEffect(() => {

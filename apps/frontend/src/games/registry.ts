@@ -26,6 +26,7 @@ import { TeenPattiEngine } from './cards/teen-patti-engine';
 import { DiceEngine, DICE_CONFIG } from './dice-engine';
 import { RouletteEngine } from './roulette-engine';
 import { PlinkoEngine, PLINKO_CONFIG } from './plinko-engine';
+import { SlotsEngine } from './slots-engine';
 
 /** Single-shot reveal games (deal → animate → settle) share these capabilities. */
 const REVEAL_CAPS: GameModule['descriptor']['capabilities'] = {
@@ -210,6 +211,19 @@ export const GAME_MODULES: GameModule[] = [
       name: 'casino-war',
       engineKey: 'casino-war',
       category: 'card',
+      capabilities: { ...REVEAL_CAPS },
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    // One descriptor serves the generic slot renderer; the per-round title flows
+    // through bet.metadata (gameName/statsKey) so history keeps per-title identity.
+    engine: new SlotsEngine(),
+    descriptor: {
+      gameId: 'slots',
+      name: 'slots',
+      engineKey: 'slots',
+      category: 'slots',
       capabilities: { ...REVEAL_CAPS },
       config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
     },
