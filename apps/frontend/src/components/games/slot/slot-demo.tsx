@@ -20,10 +20,11 @@ import { useDemoWallet } from '@/stores/demo-wallet';
  * strips are stable across SSR/CSR (no hydration drift) and every session is
  * reproducible. Respects reduced-motion.
  *
- * Uses the shared demo wallet (Phase 1.3.1) — every spin `spend()`s the bet and
- * settles through `settleRound()`, so the slot behaves exactly like the card /
- * crash / dice / roulette games: one wallet, auto bet + win transactions, and a
- * bet-history entry per round. The jackpot pool is a cosmetic demo counter.
+ * Runs through the Game Runtime (Phase 3) — every spin goes `startRound` → engine
+ * (provably-fair reels, flexible Win/Jackpot settlement) → `cashOut`/`finishRound`,
+ * so the slot behaves exactly like the card / crash / dice / roulette games: one
+ * wallet, auto bet + win transactions, and a bet-history entry per round (keyed by
+ * the slot title via bet metadata). The jackpot pool is a cosmetic demo counter.
  */
 
 // Reel strips, symbols, and RNG helpers live in the shared slots engine.
