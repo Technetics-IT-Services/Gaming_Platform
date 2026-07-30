@@ -18,6 +18,7 @@ import type { GameRegistration } from '@/runtime/game-runtime';
 
 import { AndarBaharEngine } from './cards/andar-bahar-engine';
 import { BaccaratEngine } from './cards/baccarat-engine';
+import { BlackjackEngine } from './cards/blackjack-engine';
 import { DragonTigerEngine } from './cards/dragon-tiger-engine';
 import { Lucky7Engine } from './cards/lucky-7-engine';
 import { TeenPattiEngine } from './cards/teen-patti-engine';
@@ -187,6 +188,17 @@ export const GAME_MODULES: GameModule[] = [
       engineKey: 'teen-patti',
       category: 'card',
       capabilities: REVEAL_CAPS,
+      config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
+    },
+  },
+  {
+    engine: new BlackjackEngine(),
+    descriptor: {
+      gameId: 'blackjack',
+      name: 'blackjack',
+      engineKey: 'blackjack',
+      category: 'card',
+      capabilities: { ...REVEAL_CAPS },
       config: { minBet: 1, maxBet: 1_000_000, rewards: LEGACY_XP },
     },
   },

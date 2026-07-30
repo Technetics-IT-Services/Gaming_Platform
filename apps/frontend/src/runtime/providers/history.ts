@@ -32,6 +32,9 @@ export type DemoHistoryRecord = IBetResult & {
    * demo store only surfaces label/value, a real backend persists these. */
   settlementType?: string;
   reason?: string;
+  /** Per-round stats key override (Phase 3) — the generic slot renderer keys stats
+   * by title; absent → the gameId (existing games unchanged). */
+  statsKey?: string;
 };
 
 export class DemoHistoryProvider implements IGameHistoryProvider {
@@ -48,7 +51,7 @@ export class DemoHistoryProvider implements IGameHistoryProvider {
       multiplier: win ? entry.multiplier : 0,
     });
 
-    useGameStats.getState().record(entry.gameId, {
+    useGameStats.getState().record(entry.statsKey ?? entry.gameId, {
       label: entry.displayLabel ?? `${entry.multiplier.toFixed(2)}×`,
       win,
       payout: net,

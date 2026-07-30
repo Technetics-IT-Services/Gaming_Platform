@@ -13,7 +13,7 @@ import type {
   PlayerAction,
   PlayerId,
 } from '@gaming-platform/types';
-import { RuntimeState } from '@gaming-platform/types';
+import { BetOutcome, RuntimeState } from '@gaming-platform/types';
 
 import { BetEngine, type BetLimits } from './bet-engine';
 import { EngineRegistry } from './engine-registry';
@@ -314,6 +314,32 @@ export class GameRuntime {
     return ctx ? { state: ctx.state, gameState: ctx.gameState as TGameState } : null;
   }
 
+  /**
+   * Increase the committed stake of a live interactive round (Phase 3) — the
+   * generic capability behind a blackjack double or a casino-war "go to war". The
+   * runtime debits the increment through the wallet and folds it into the round's
+   * stake, so settlement + history use the full committed amount. Game-agnostic:
+   * the runtime knows nothing about doubling or war, only that the stake rose.
+   */
+  async raiseStake(input: { roundId: string; amount: string }): Promise<{ stake: string }> {
+    const ctx = this.steps.get(input.roundId);
+    if (!ctx) throw new RuntimeError(RuntimeErrorCode.ROUND_NOT_FOUND, 'No interactive round for this id.');
+    if (ctx.state === RuntimeState.Completed || ctx.state === RuntimeState.Cancelled || ctx.state === RuntimeState.Expired) {
+      throw new RuntimeError(RuntimeErrorCode.ROUND_ALREADY_SETTLED, 'Interactive round already finished.');
+    }
+    const debited = await this.providers.wallet.debit({
+      playerId: this.player.playerId,
+      currency: this.player.currency,
+      amount: input.amount,
+      reference: `raise:${input.roundId}`,
+      idempotencyKey: `raise:${input.roundId}:${ctx.bet.stake.amount}:${input.amount}`,
+    });
+    const stake = String(Number(ctx.bet.stake.amount) + Number(input.amount));
+    ctx.bet = { ...ctx.bet, stake: { ...ctx.bet.stake, amount: stake } };
+    this.bus.emit(RuntimeEventName.WALLET_DEBITED, { amount: input.amount, balanceAfter: debited.balanceAfter }, { sessionId: ctx.session.sessionId, roundId: input.roundId });
+    return { stake };
+  }
+
   /** Cancel an interactive round and refund the stake (reuses the round refund). */
   async cancelInteractive(input: { roundId: string }): Promise<void> {
     const ctx = this.steps.get(input.roundId);
@@ -388,16 +414,23 @@ export class GameRuntime {
     // outcome is taken from settlement so push/refund/bonus are recorded faithfully.
     const game = this.games.get(bet.gameId);
     const rewards = game?.config.rewards as { winXp?: number; lossXp?: number } | undefined;
+    // Per-round history identity (Phase 3): a game may override the ledger display
+    // name + stats key via bet.metadata — the generic slot renderer serves many
+    // titles under one descriptor. Absent → the descriptor name / gameId (unchanged).
+    const meta = bet.metadata as { gameName?: string; statsKey?: string } | undefined;
+    const nonLoss = betResult.outcome === BetOutcome.Push || betResult.outcome === BetOutcome.Refund;
     const record: DemoHistoryRecord = {
       ...betResult,
       outcome: betResult.outcome,
       playerId: session.playerId,
       gameId: bet.gameId,
-      gameName: game?.name,
+      gameName: meta?.gameName ?? game?.name,
+      statsKey: meta?.statsKey,
       displayLabel: result.display?.label ?? `${displayValue.toFixed(2)}×`,
       displayValue: result.display?.value ?? displayValue,
       multiplier: creditMultiplier ?? betResult.multiplier,
-      xp: rewards ? (win ? rewards.winXp ?? 40 : rewards.lossXp ?? 12) : undefined,
+      // Push/Refund award no XP (matches legacy — those never went through settleRound).
+      xp: rewards ? (nonLoss ? 0 : win ? rewards.winXp ?? 40 : rewards.lossXp ?? 12) : undefined,
       settlementType: result.settlement?.type,
       reason: result.settlement?.reason,
     };

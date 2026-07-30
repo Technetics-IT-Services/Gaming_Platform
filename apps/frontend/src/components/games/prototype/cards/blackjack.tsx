@@ -1,39 +1,44 @@
 'use client';
 
 import { Button, cn } from '@gaming-platform/ui';
+import type { IBetRequest, IStepResult } from '@gaming-platform/types';
+import { BetMode, RuntimeState, SettlementType } from '@gaming-platform/types';
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { PlayingCard } from '@/components/card/playing-card';
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
-import { blackjackHand, type Card, createDeck, shuffle } from '@/lib/deck';
-import { settleRound } from '@/lib/game-result';
+import { type BlackjackState } from '@/games/cards/blackjack-engine';
+import { blackjackHand, type Card } from '@/lib/deck';
 import { sound } from '@/lib/sound';
+import { useGameRuntime } from '@/runtime/react/use-game-runtime';
 import { useDemoWallet } from '@/stores/demo-wallet';
-import { useGameStat, useGameStats } from '@/stores/game-stats';
+import { useGameStat } from '@/stores/game-stats';
 
 type Phase = 'bet' | 'player' | 'dealer' | 'done';
 const CHIPS = [100, 500, 1000, 5000];
 
 export function BlackjackGame() {
+  // The Runtime owns bet/RNG/settlement/history (incl. the double via raiseStake);
+  // the UI only renders + collects intent. Demo providers delegate to these same
+  // stores, so surfaces are unchanged.
+  const { runtime, session } = useGameRuntime('blackjack');
   const balance = useDemoWallet((s) => s.balance);
-  const spend = useDemoWallet((s) => s.spend);
-  const refund = useDemoWallet((s) => s.refund);
   const stat = useGameStat('blackjack');
 
   const [phase, setPhase] = useState<Phase>('bet');
   const [bet, setBet] = useState(500);
-  const [wager, setWager] = useState(0);
   const [player, setPlayer] = useState<Card[]>([]);
   const [dealer, setDealer] = useState<Card[]>([]);
   const [reveal, setReveal] = useState(false);
   const [result, setResult] = useState<{ text: string; tone: 'win' | 'lose' | 'push' } | null>(null);
   const [fx, setFx] = useState<FxSignal>({ key: 0, type: null });
 
-  const deckRef = useRef<Card[]>([]);
-  const seedRef = useRef(1);
+  const roundIdRef = useRef<string | null>(null);
+  const wagerRef = useRef(0);
   const fxKey = useRef(0);
   const timers = useRef<number[]>([]);
+  const pendingRef = useRef(false);
   const after = (ms: number, fn: () => void) => {
     timers.current.push(window.setTimeout(fn, ms));
   };
@@ -41,136 +46,154 @@ export function BlackjackGame() {
   const pv = blackjackHand(player);
   const dv = blackjackHand(dealer);
 
-  const finish = useCallback(
-    (finalPlayer: Card[], finalDealer: Card[]) => {
-      const p = blackjackHand(finalPlayer);
-      const d = blackjackHand(finalDealer);
-      setReveal(true);
-      let tone: 'win' | 'lose' | 'push';
-      let text: string;
-      if (p.total > 21) {
-        tone = 'lose';
-        text = 'Bust!';
-      } else if (d.total > 21) {
-        tone = 'win';
-        text = 'Dealer busts — you win!';
-      } else if (p.blackjack && !d.blackjack) {
-        tone = 'win';
-        text = 'Blackjack!';
-      } else if (p.total > d.total) {
-        tone = 'win';
-        text = `You win ${p.total} vs ${d.total}`;
-      } else if (p.total < d.total) {
-        tone = 'lose';
-        text = `Dealer wins ${d.total} vs ${p.total}`;
-      } else {
-        tone = 'push';
-        text = `Push — ${p.total} each`;
-      }
+  /** Present a completed round (already settled by the runtime). */
+  const settleUi = useCallback((step: IStepResult<BlackjackState>) => {
+    const s = step.settlement;
+    const tone: 'win' | 'lose' | 'push' =
+      s?.type === SettlementType.Win ? 'win' : s?.type === SettlementType.Push ? 'push' : 'lose';
+    setReveal(true);
+    setResult({ text: s?.reason ?? '', tone });
+    setPhase('done');
+    if (tone === 'win') {
+      fxKey.current += 1;
+      setFx({ key: fxKey.current, type: 'win', amount: Number(s?.payout ?? 0) - wagerRef.current });
+      sound.play('reward');
+    } else if (tone === 'push') {
+      sound.play('notify');
+    } else {
+      sound.play('lose');
+    }
+  }, []);
 
-      if (tone === 'win') {
-        const mult = p.blackjack ? 2.5 : 2;
-        fxKey.current += 1;
-        setFx({ key: fxKey.current, type: 'win', amount: Math.round(wager * mult - wager) });
-        settleRound({ game: 'blackjack', stake: wager, win: true, multiplier: mult, label: p.blackjack ? 'Blackjack!' : `Win ${p.total}`, value: p.total });
-      } else if (tone === 'push') {
-        refund(wager, { label: 'Blackjack push', source: 'blackjack' }); // return stake
-        useGameStats.getState().record('blackjack', { label: 'Push', win: false, payout: 0, value: p.total });
-        sound.play('notify');
-      } else {
-        settleRound({ game: 'blackjack', stake: wager, win: false, multiplier: 0, label: `Loss ${p.total}`, value: p.total });
-      }
-      setResult({ text, tone });
-      setPhase('done');
-    },
-    [wager, refund],
-  );
-
-  const dealerPlay = useCallback(
-    (curDealer: Card[], curPlayer: Card[]) => {
-      setPhase('dealer');
-      setReveal(true);
-      const play = (hand: Card[]) => {
-        const v = blackjackHand(hand);
-        if (v.total < 17) {
-          const next = deckRef.current.pop();
-          if (!next) return finish(curPlayer, hand);
-          const nh = [...hand, next];
-          setDealer(nh);
-          sound.play('cardFlip');
-          after(650, () => play(nh));
-        } else {
-          finish(curPlayer, hand);
+  /** Reveal the dealer's drawn cards one at a time, then run `onDone`. */
+  const animateDealer = useCallback((finalDealer: Card[], onDone: () => void) => {
+    setPhase('dealer');
+    setReveal(true);
+    after(500, () => {
+      let n = 2; // dealer starts with two cards shown
+      const drawNext = () => {
+        if (n >= finalDealer.length) {
+          onDone();
+          return;
         }
+        n += 1;
+        setDealer(finalDealer.slice(0, n));
+        sound.play('cardFlip');
+        after(650, drawNext);
       };
-      after(500, () => play(curDealer));
+      drawNext();
+    });
+  }, []);
+
+  /** After a stand/double, animate the dealer reveal then settle via `resolve`. */
+  const resolveAfterReveal = useCallback(
+    (finalDealer: Card[]) => {
+      const roundId = roundIdRef.current;
+      if (!roundId) return;
+      animateDealer(finalDealer, () => {
+        void runtime
+          .submitAction<BlackjackState>({ roundId, action: { type: 'resolve' } })
+          .then((step) => settleUi(step))
+          .catch(() => {});
+      });
     },
-    [finish],
+    [runtime, animateDealer, settleUi],
   );
 
-  const deal = useCallback(
-    (replaySeed?: number) => {
-      const stake = Math.max(1, Math.floor(bet));
-      if (stake > balance) {
-        toast.error('Not enough demo coins — reload from the balance pill.');
-        return;
-      }
-      timers.current.forEach(clearTimeout);
-      timers.current = [];
-      const seed = replaySeed ?? Math.floor(performance.now() * 1000) % 2 ** 31;
-      seedRef.current = seed >>> 0;
-      const d = shuffle(createDeck(6), seedRef.current);
-      spend(stake);
-      setWager(stake);
-      setResult(null);
-      setReveal(false);
+  const deal = useCallback(() => {
+    if (phase === 'player' || phase === 'dealer' || pendingRef.current) return;
+    const stake = Math.max(1, Math.floor(bet));
+    if (!session) {
+      toast.error('Starting session… try again in a moment.');
+      return;
+    }
+    if (stake > balance) {
+      toast.error('Not enough demo coins — reload from the balance pill.');
+      return;
+    }
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    pendingRef.current = true;
 
-      const p1 = d.pop()!;
-      const d1 = d.pop()!;
-      const p2 = d.pop()!;
-      const d2 = d.pop()!;
-      deckRef.current = d;
-      const ph = [p1, p2];
-      const dh = [d1, d2];
-      setPlayer(ph);
-      setDealer(dh);
-      setPhase('player');
-      sound.play('cardFlip');
-
-      const p = blackjackHand(ph);
-      const dd = blackjackHand(dh);
-      if (p.blackjack || dd.blackjack) after(700, () => finish(ph, dh));
-    },
-    [bet, balance, spend, finish],
-  );
+    const betReq: IBetRequest = {
+      gameId: 'blackjack',
+      sessionId: session.sessionId,
+      stake: { amount: String(stake), currency: 'INR' },
+      mode: BetMode.Single,
+      selections: [{ pick: null }],
+      idempotencyKey: `blackjack:${session.sessionId}:${stat.seq}:${stake}`,
+      clientSeed: 'demo',
+    };
+    void runtime
+      .startInteractive<BlackjackState>(betReq)
+      .then(({ roundId, step }) => {
+        roundIdRef.current = roundId;
+        wagerRef.current = stake;
+        setResult(null);
+        setPlayer(step.gameState.player);
+        setDealer(step.gameState.dealer);
+        sound.play('cardFlip');
+        if (step.state === RuntimeState.Completed) {
+          after(700, () => settleUi(step)); // immediate blackjack
+        } else {
+          setReveal(false);
+          setPhase('player');
+        }
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not place bet.');
+      })
+      .finally(() => {
+        pendingRef.current = false;
+      });
+  }, [phase, bet, balance, session, stat.seq, runtime, settleUi]);
 
   const hit = () => {
-    if (phase !== 'player') return;
-    const next = deckRef.current.pop();
-    if (!next) return;
-    const nh = [...player, next];
-    setPlayer(nh);
-    sound.play('cardFlip');
-    if (blackjackHand(nh).total > 21) after(500, () => finish(nh, dealer));
+    const roundId = roundIdRef.current;
+    if (phase !== 'player' || !roundId) return;
+    void runtime
+      .submitAction<BlackjackState>({ roundId, action: { type: 'hit' } })
+      .then((step) => {
+        setPlayer(step.gameState.player);
+        sound.play('cardFlip');
+        if (step.state === RuntimeState.Completed) after(500, () => settleUi(step)); // bust
+      })
+      .catch(() => {});
   };
+
   const stand = () => {
-    if (phase !== 'player') return;
-    dealerPlay(dealer, player);
+    const roundId = roundIdRef.current;
+    if (phase !== 'player' || !roundId) return;
+    void runtime
+      .submitAction<BlackjackState>({ roundId, action: { type: 'stand' } })
+      .then((step) => resolveAfterReveal(step.gameState.dealer))
+      .catch(() => {});
   };
+
   const double = () => {
-    if (phase !== 'player' || player.length !== 2) return;
-    if (wager > balance) {
+    const roundId = roundIdRef.current;
+    if (phase !== 'player' || player.length !== 2 || !roundId) return;
+    if (wagerRef.current > balance) {
       toast.error('Not enough to double.');
       return;
     }
-    spend(wager);
-    setWager((w) => w * 2);
-    const next = deckRef.current.pop();
-    if (!next) return;
-    const nh = [...player, next];
-    setPlayer(nh);
-    sound.play('chips');
-    after(500, () => (blackjackHand(nh).total > 21 ? finish(nh, dealer) : dealerPlay(dealer, nh)));
+    // Runtime raises the committed stake (the one wallet op the base API can't do),
+    // then the engine draws one card and plays the dealer.
+    void runtime
+      .raiseStake({ roundId, amount: String(wagerRef.current) })
+      .then(() => {
+        wagerRef.current *= 2;
+        sound.play('chips');
+        return runtime.submitAction<BlackjackState>({ roundId, action: { type: 'double' } });
+      })
+      .then((step) => {
+        setPlayer(step.gameState.player);
+        if (step.state === RuntimeState.Completed) after(500, () => settleUi(step)); // double bust
+        else resolveAfterReveal(step.gameState.dealer);
+      })
+      .catch((e: unknown) => {
+        toast.error(e instanceof Error ? e.message : 'Could not double.');
+      });
   };
 
   const inRound = phase === 'player' || phase === 'dealer';
@@ -265,7 +288,7 @@ export function BlackjackGame() {
                 {phase === 'done' ? 'Deal again' : 'Deal'} · {bet.toLocaleString('en-US')}
               </Button>
               {phase === 'done' ? (
-                <Button variant="glass" size="lg" onClick={() => deal(seedRef.current)} title="Replay same shoe">↻</Button>
+                <Button variant="glass" size="lg" onClick={() => deal()} title="Deal again">↻</Button>
               ) : null}
             </div>
           )}
