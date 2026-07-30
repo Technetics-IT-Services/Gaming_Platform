@@ -556,3 +556,65 @@ phases, NOT implemented here):** Deposit/Withdrawal transaction types are placeh
 gateway (Razorpay/Stripe/Cashfree/PhonePe/UPI) would post the `external:world` leg after
 provider confirmation; KYC/withdrawal-approval gate the `Withdrawal` posting. None of that exists
 yet — this phase delivers only the ledger + wallet foundation.
+
+## 19. Payment platform & gateways (Phase 5B)
+
+A **provider-agnostic** payment platform sits below the ledger: deposits flow
+`PaymentService → ledger port → wallet → ledger`. The casino never depends on a
+gateway vendor — each is an adapter behind `IPaymentProvider`. **Zero platform
+change** (nothing under `src/runtime/**`, `packages/types`, `src/games/**`, or the
+game providers). Module: `src/lib/payments/` (framework-agnostic TS).
+
+### 19.1 Provider abstraction
+
+`IPaymentProvider`: `createDepositIntent`, `verifyPayment` (callback), `verifyWebhook`,
+`capturePayment`, `cancelPayment`, `refundPayment`, `queryStatus`, `healthCheck`. Every gateway
+implements it; **no provider-specific logic lives outside its adapter**. `GatewayRegistry` +
+`createGatewayRegistry(configs)` register only the configured gateways and stay open to new ones
+(Paytm/PayPal) without touching existing code.
+
+### 19.2 Gateway adapters — real signature schemes
+
+- **Razorpay** — callback `HMAC-SHA256(order_id|payment_id, keySecret)`; webhook
+  `HMAC-SHA256(rawBody, webhookSecret)` in `x-razorpay-signature`.
+- **Stripe** — `Stripe-Signature: t=…,v1=…`; `HMAC-SHA256(${t}.${rawBody}, endpointSecret)` with a
+  replay-tolerance window; redirects are unsigned so completion is webhook-only.
+- **Cashfree** — `x-webhook-signature = base64(HMAC-SHA256(${timestamp}${rawBody}, secret))` with a
+  timestamp replay window.
+- **PhonePe** — `X-VERIFY = sha256(base64Body + endpoint + saltKey)###saltIndex` (SHA-256, base64
+  body decoded after verification).
+
+No network calls are made (no live keys); `createDepositIntent` returns the modeled order the
+client SDK would open. All ops are async, matching real gateway I/O.
+
+### 19.3 Deposit lifecycle & webhook flow
+
+`createDeposit` (validate → `Created` → gateway intent → `Pending`) → checkout → **webhook**
+(`verifyWebhook`: signature + replay window) or signed **callback** → normalize → **credit the
+ledger port** → `Succeeded`. Only verified events touch the ledger. Statuses: Created, Pending,
+Authorized, Captured, Succeeded, Failed, Cancelled, Expired, Refunded, Reversed. Every step writes
+an audit record (no secrets) and emits a payment event (a payment-local emitter — the runtime
+EventBus is untouched).
+
+### 19.4 Idempotency (exactly-once)
+
+Triple-guarded: (1) **webhook-event dedup** (`processedEvents` set — duplicate/replayed events are
+no-ops), (2) an **intent status guard** (a `Succeeded` intent never re-credits), and (3) the
+**ledger idempotency key** `deposit:<intentId>` (the ledger dedupes too). Verified across duplicate
+webhooks, a duplicate callback, and a webhook+callback race — the wallet is credited exactly once.
+
+### 19.5 Security & ledger integration
+
+Timing-safe signature comparison; per-webhook replay window; input validation (positive-integer
+amount, currency, known provider); cryptographically-random ids; secrets used only to compute a
+digest (never logged — asserted). On success the flow is: create ledger transaction → credit wallet
+→ update payment status → write audit → emit event — **never a direct balance change**. Refunds
+reverse via the ledger `debit` port.
+
+### 19.6 Provider integration guide
+
+To add a gateway: (1) write `MyProvider implements IPaymentProvider` in
+`src/lib/payments/providers/` (its signature scheme only), (2) add its config to `GatewayConfigs`
+and register it in `createGatewayRegistry`. Nothing else changes — the `PaymentService`, ledger,
+wallet, runtime, and games are all untouched. **Not implemented (later phases):** withdrawal
+approval, KYC, AML, fraud detection, and any finance/admin/partner portal.
