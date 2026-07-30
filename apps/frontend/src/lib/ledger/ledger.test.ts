@@ -138,7 +138,7 @@ describe('Ledger — idempotency (exactly-once)', () => {
         { account: 'house:main', direction: EntryDirection.Debit, amount: 200 },
       ],
       allowNegativeAccounts: ['house:main'],
-    } as const;
+    };
     const a = l.post(spec);
     const b = l.post(spec); // retry
     expect(b.id).toBe(a.id);
