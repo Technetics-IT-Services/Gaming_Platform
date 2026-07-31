@@ -1,0 +1,40 @@
+# =============================================================================
+# Multi-zone HA overlays (Phase 10, STEP 1). ADDITIVE — patches the frozen Phase-7
+# deployments with zone-spread + anti-affinity + tighter PDBs. Apply as a Kustomize
+# overlay / strategic-merge patch; it does not modify the base manifests.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: gaming-platform
+spec:
+  template:
+    spec:
+      # Spread replicas across zones AND nodes so one zone/node loss is survivable.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: { matchLabels: { app.kubernetes.io/name: frontend } }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app.kubernetes.io/name: frontend } }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: topology.kubernetes.io/zone
+                labelSelector: { matchLabels: { app.kubernetes.io/name: frontend } }
+---
+# Tighten availability during voluntary disruptions across a ≥3-replica, 3-zone fleet.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-ha
+  namespace: gaming-platform
+spec:
+  maxUnavailable: 1 # never take down more than one at once (survives a zone drain)
+  selector: { matchLabels: { app.kubernetes.io/name: frontend } }

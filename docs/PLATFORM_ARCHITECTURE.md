@@ -1204,3 +1204,35 @@ interfaces). Module: `src/lib/integrations/`. See `docs/INTEGRATIONS.md`.
 - **Testing (STEP 10):** `integrations.test.ts` — 15 contract tests (retry/failover, PayPal
   order/capture/webhook/idempotency, Twilio signature, S3 SigV4, secret round-trips, envelope
   encryption, SIEM forward, WebAuthn, reliable queue + DLQ + health). Full suite **412 green**.
+
+## 29. Scalability, HA & resilience platform (Phase 10)
+
+Operational resilience built **around** the frozen platform — **zero** business, financial or
+architectural change. Every pattern is a wrapper/adapter; the frozen Runtime/Ledger/Treasury/Payments/
+Compliance/Operations/CRM/Partner/Analytics/Infrastructure/Security/Integrations modules are untouched.
+Additive: `src/lib/resilience/` + `deploy/ha/` overlays + HA/SRE docs. See `docs/HIGH_AVAILABILITY.md`,
+`RESILIENCE_GUIDE.md`, `CHAOS_ENGINEERING.md`, `SRE_HANDBOOK.md`.
+
+- **HA (STEP 1):** multi-zone spread + anti-affinity + tighter PDB (`deploy/ha/multi-zone.yaml`);
+  lease-based `LeaderElection` (active-passive singletons); active-active for stateless web/API;
+  `HealthBasedRouter` (health-based routing + region affinity + connection draining).
+- **Scaling (STEP 2):** HPA (Phase-7) + `capacity` sizing math; stateless deployment (sessions in
+  Redis); no affinity needed for money paths.
+- **Resilience (STEP 3):** `CircuitBreaker`, `Bulkhead`, `withTimeout`, `RetryBudget`, `withFallback`,
+  `AdaptiveRateLimiter` (AIMD), `BackpressureMonitor` (sheds low-priority, keeps critical money paths),
+  `DegradationRegistry`, all composed by `Resilience.run(op, fallback?)` — wraps existing calls.
+- **Traffic (STEP 4):** global LB / geo routing / regional failover (`regionFailed`), CDN, ingress
+  failover, traffic shaping, connection draining — documented + modeled.
+- **DB/Redis HA (STEP 5/6):** read replicas + split read/write + `synchronous_commit` for the ledger;
+  Redis Sentinel topology (`deploy/ha/redis-sentinel.yaml`), split cache/queue, AOF durability.
+- **Chaos (STEP 7):** `FailureInjector` + `ChaosExperiment` (steady-state → inject → probe → always
+  roll back) with latency/error/outage/queue/DB/worker simulators.
+- **Capacity & SRE (STEP 8/9):** `sizeReplicas`/`sizeWorkers`/`sizeConnectionPool`/`planPeak`/
+  `estimateCost`/`projectGrowth`; `SLOTracker`/`SREPlatform` (SLI, error budget, burn-rate alerts,
+  downtime budget).
+- **Validation (STEP 10):** failure + recovery matrices (`RESILIENCE_GUIDE.md`), availability
+  verification table (`SRE_HANDBOOK.md`) — every requirement maps to a tested wrapper.
+- **Testing (STEP 11):** `resilience.test.ts` — 17 deterministic tests (circuit/bulkhead/timeout/
+  retry-budget/fallback, composed wrapper, adaptive limiter/backpressure/degradation, leader election,
+  health routing, chaos, capacity, SLO/error-budget). Full suite **429 green**. Every game-day asserts
+  `ledger.reconcile().systemSum === 0` — resilience never compromises financial integrity.

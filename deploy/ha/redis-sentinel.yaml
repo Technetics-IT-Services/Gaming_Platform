@@ -1,0 +1,77 @@
+# =============================================================================
+# Redis HA — Sentinel topology (Phase 10, STEP 6). ADDITIVE reference manifest.
+# 1 primary + 2 replicas + 3 Sentinels (quorum 2) → automatic primary failover.
+# Prefer a managed Redis (ElastiCache/MemoryStore) or the Redis Operator in prod;
+# this documents the in-cluster fallback. Cache and queue run on SEPARATE instances.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-sentinel-config
+  namespace: gaming-platform
+data:
+  sentinel.conf: |
+    port 26379
+    sentinel monitor mymaster redis-0.redis 6379 2   # quorum 2 of 3
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel failover-timeout mymaster 60000
+    sentinel parallel-syncs mymaster 1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: gaming-platform
+spec:
+  serviceName: redis
+  replicas: 3 # 1 primary + 2 replicas (replication configured via init container)
+  selector: { matchLabels: { app.kubernetes.io/name: redis } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: redis } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 999, fsGroup: 999, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: { matchLabels: { app.kubernetes.io/name: redis } }
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "/etc/redis/redis.conf"]
+          ports: [{ containerPort: 6379 }]
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 3584Mi } }
+          livenessProbe: { exec: { command: ["redis-cli", "ping"] }, periodSeconds: 10 }
+          readinessProbe: { exec: { command: ["redis-cli", "ping"] }, periodSeconds: 5 }
+          volumeMounts: [{ name: data, mountPath: /data }, { name: config, mountPath: /etc/redis }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      volumes: [{ name: config, configMap: { name: redis-config } }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], storageClassName: fast-ssd, resources: { requests: { storage: 20Gi } } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-sentinel
+  namespace: gaming-platform
+spec:
+  replicas: 3 # 3 Sentinels for a stable quorum, spread across zones
+  selector: { matchLabels: { app.kubernetes.io/name: redis-sentinel } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: redis-sentinel } }
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app.kubernetes.io/name: redis-sentinel } }
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+          ports: [{ containerPort: 26379 }]
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 200m, memory: 128Mi } }
+          volumeMounts: [{ name: config, mountPath: /etc/redis }]
+          securityContext: { runAsNonRoot: true, runAsUser: 999, allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+      volumes: [{ name: config, configMap: { name: redis-sentinel-config } }]
