@@ -1,0 +1,39 @@
+# =============================================================================
+# Ingress (Phase 7, STEP 2). TLS-terminated, HSTS, rate-limited, WAF-friendly.
+# Multi-tenant host routing maps brand domains → the frontend service (the
+# white-label tenant resolver runs in-app). cert-manager issues certificates.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: gaming-platform
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  tls:
+    - hosts: [app.gaming-platform.example, "*.brands.gaming-platform.example"]
+      secretName: gaming-platform-tls
+  rules:
+    - host: app.gaming-platform.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { number: 80 } } }
+    - host: "*.brands.gaming-platform.example" # white-label tenant domains
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: frontend, port: { number: 80 } } }

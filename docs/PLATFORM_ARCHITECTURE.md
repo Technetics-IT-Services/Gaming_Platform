@@ -1102,3 +1102,40 @@ Runtime + Ledger, each phase strictly additive and read-only toward the layers b
 
 Every phase kept the Runtime, Game Engines, Registry, providers, Settlement, Event Bus and Session
 Manager untouched; money movement stays exclusively double-entry through the ledger.
+
+## 26. Production infrastructure & deployment platform (Phase 7)
+
+Not feature work — this phase packages the **frozen** Enterprise Platform for production deployment
+and operation. **Zero business-logic change**: Runtime, Games, Wallet, Ledger, Treasury, Payments,
+Compliance, Operations, CRM, Partner, Analytics and Settlement are byte-for-byte unchanged. Additive
+only: a framework-agnostic infra library (`src/lib/infra/`) plus deployment artifacts (`deploy/`) and
+operational docs. See `docs/INFRASTRUCTURE.md`, `docs/DISASTER_RECOVERY.md`, `docs/RUNBOOKS.md`.
+
+- **Containers (STEP 1):** hardened multi-stage images — non-root (uid 1001), read-only rootfs, tini
+  PID 1, dropped capabilities, healthchecks; existing `docker/Dockerfile.frontend` (standalone Next)
+  + new `deploy/docker/Dockerfile.worker`.
+- **Kubernetes (STEP 2):** `deploy/k8s/` — namespace + ResourceQuota + LimitRange + Pod Security
+  `restricted` + default-deny NetworkPolicy; frontend/worker Deployments; Service; TLS Ingress with
+  white-label host routing; HPA (CPU/mem + queue-depth); PodDisruptionBudgets; PVCs; PgBouncer;
+  migration Job.
+- **Configuration (STEP 3):** `src/lib/infra/config.ts` — validated schema (aggregated errors),
+  secret injection + masking, env profiles, feature flags (env/tenant scoped), tenant config.
+- **Database (STEP 4):** `deploy/postgres/postgresql.tuning.conf` — strict durability
+  (`synchronous_commit=on`), WAL archiving + PITR, hot-standby replicas, PgBouncer transaction
+  pooling, expand-only migration Job, `pg_stat_statements`.
+- **Redis (STEP 5):** `deploy/redis/redis.conf` — cache/session/rate-limit/queue roles, AOF
+  `everysec` durability, LRU eviction, keyspace notifications for delayed jobs.
+- **Background processing (STEP 6):** `src/lib/infra/{queue,jobs}.ts` — transport-agnostic `IQueue`
+  + dead-letter queue, `Worker` with retry/backoff + monitoring hooks + stats + lifecycle, and a
+  deterministic `Scheduler`.
+- **Deployment (STEP 7):** `deploy/ci/deploy-pipeline.yml` — rolling / blue-green / canary with an
+  SLO gate, auto-rollback and image scanning; `src/lib/infra/version.ts` for `/version` traceability.
+- **Backup & DR (STEP 8):** RPO ≤ 1 min (ledger, continuous WAL), RTO ≤ 30 min; PITR + standby
+  failover; post-recovery validation asserts `ledger.reconcile().systemSum === 0`.
+- **Health (STEP 1/4/5):** `src/lib/infra/health.ts` — liveness + readiness aggregation with
+  critical vs non-critical probes (DB / Redis / queue depth).
+- **Security (STEP 10):** least-privilege containers, secret isolation (External Secrets/Vault, never
+  committed), image-scan gate on HIGH/CRITICAL, TLS + HSTS + security headers.
+- **Testing (STEP 11):** `src/lib/infra/infra.test.ts` — config validation/masking, feature-flag
+  scoping, tenant config, queue/DLQ, worker retry→backoff→dead-letter + lifecycle, scheduler, health
+  aggregation, version/semver (13 tests). All deploy YAML is schema-valid.

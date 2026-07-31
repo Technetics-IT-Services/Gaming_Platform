@@ -1,0 +1,56 @@
+# =============================================================================
+# Namespace + resource quota + baseline network policy (Phase 7, STEP 2 & 10).
+# One namespace per environment: gaming-platform-{staging,production}.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gaming-platform
+  labels:
+    app.kubernetes.io/part-of: gaming-platform
+    pod-security.kubernetes.io/enforce: restricted # least-privilege pod security
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gaming-platform-quota
+  namespace: gaming-platform
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    pods: "50"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gaming-platform-limits
+  namespace: gaming-platform
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+---
+# Default-deny ingress; allow only from the ingress controller + within the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: gaming-platform
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+        - podSelector: {}

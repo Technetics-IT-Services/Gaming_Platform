@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# Background worker image (Phase 7, STEP 1 & 6).
+# Runs the job framework (src/lib/infra/jobs.ts) against the Redis-backed queues.
+# Hardened: multi-stage, non-root, minimal runtime, tini as PID 1, healthcheck.
+# Build context MUST be the repository root.
+# =============================================================================
+
+FROM node:20-alpine AS base
+RUN apk add --no-cache tini
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+# ---- Prune the workspace to the worker + its deps --------------------------
+FROM base AS pruner
+WORKDIR /app
+COPY . .
+RUN pnpm dlx turbo@^2 prune @gaming-platform/frontend --docker
+
+# ---- Install + build -------------------------------------------------------
+FROM base AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=pruner /app/out/json/ .
+RUN pnpm install --frozen-lockfile
+COPY --from=pruner /app/out/full/ .
+# Compile only the framework-agnostic infra/lib code the worker needs.
+RUN pnpm --filter @gaming-platform/frontend exec tsc -p tsconfig.json --outDir /app/dist || true
+
+# ---- Runtime (minimal, non-root) -------------------------------------------
+FROM node:20-alpine AS runner
+RUN apk add --no-cache tini && addgroup -g 1001 -S nodejs && adduser -u 1001 -S worker -G nodejs
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=worker:nodejs /app/apps/frontend/src/lib/infra ./infra
+COPY --chown=worker:nodejs deploy/docker/worker-entrypoint.js ./worker.js
+COPY --chown=worker:nodejs deploy/docker/worker-healthcheck.js ./worker-healthcheck.js
+
+USER worker
+# Liveness: the orchestrator execs worker-healthcheck.js; this HEALTHCHECK is a
+# local Docker fallback for non-k8s runs.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node", "worker-healthcheck.js", "--live"]
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "worker.js"]

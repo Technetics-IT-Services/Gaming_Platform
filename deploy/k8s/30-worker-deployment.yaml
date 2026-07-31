@@ -1,0 +1,53 @@
+# =============================================================================
+# Background worker Deployment (Phase 7, STEP 6). Runs the job framework
+# (src/lib/infra/jobs.ts) against the Redis-backed queues. No ingress — internal
+# only. Scales on queue depth via the HPA (custom metric).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: gaming-platform
+  labels: { app.kubernetes.io/name: worker, app.kubernetes.io/part-of: gaming-platform }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app.kubernetes.io/name: worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: worker, app.kubernetes.io/part-of: gaming-platform }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile: { type: RuntimeDefault }
+      terminationGracePeriodSeconds: 60 # allow in-flight jobs to finish
+      containers:
+        - name: worker
+          image: ghcr.io/gaming-platform/worker:__IMAGE_TAG__
+          imagePullPolicy: IfNotPresent
+          command: ["node", "worker.js"]
+          envFrom:
+            - configMapRef: { name: gaming-platform-config }
+            - secretRef: { name: gaming-platform-secrets }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          livenessProbe:
+            exec: { command: ["node", "worker-healthcheck.js", "--live"] }
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            exec: { command: ["node", "worker-healthcheck.js", "--ready"] }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]

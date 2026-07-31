@@ -1,0 +1,80 @@
+# =============================================================================
+# Release / deployment pipeline template (Phase 7, STEP 7).
+# Complements the existing .github/workflows/{ci,release,rollback}.yml. Encodes
+# the rollout strategies: rolling (default), blue-green and canary, with an
+# automated rollback gate. Container image scanning runs before any deploy.
+# =============================================================================
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+      strategy:
+        type: choice
+        options: [rolling, blue-green, canary]
+        default: rolling
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false # never cancel an in-flight production deploy
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write, id-token: write }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (immutable digest)
+        run: docker build -f docker/Dockerfile.frontend -t "$IMAGE:${{ github.sha }}" .
+      # STEP 10 — image scanning hook (fail on HIGH/CRITICAL).
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with: { image-ref: "${{ env.IMAGE }}:${{ github.sha }}", exit-code: "1", severity: "HIGH,CRITICAL" }
+      - name: Push image
+        run: docker push "$IMAGE:${{ github.sha }}"
+
+  migrate:
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run DB migrations (expand phase — backward compatible only)
+        run: kubectl -n gaming-platform create job --from=job/db-migrate "db-migrate-${{ github.sha }}"
+
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }} # gated approval for production
+    steps:
+      - name: Rolling deploy
+        if: ${{ github.event.inputs.strategy == 'rolling' }}
+        run: kubectl -n gaming-platform set image deploy/frontend frontend="$IMAGE:${{ github.sha }}" && kubectl -n gaming-platform rollout status deploy/frontend --timeout=300s
+
+      - name: Blue-green deploy
+        if: ${{ github.event.inputs.strategy == 'blue-green' }}
+        run: |
+          # Deploy the green stack alongside blue, smoke-test, then flip the Service selector.
+          ./deploy/scripts/blue-green.sh green "$IMAGE:${{ github.sha }}"
+          ./deploy/scripts/smoke-test.sh green
+          kubectl -n gaming-platform patch svc frontend -p '{"spec":{"selector":{"slot":"green"}}}'
+
+      - name: Canary deploy
+        if: ${{ github.event.inputs.strategy == 'canary' }}
+        run: |
+          # 10% → 50% → 100% with SLO gates between steps (error rate + p95 latency).
+          ./deploy/scripts/canary.sh "$IMAGE:${{ github.sha }}" 10
+          ./deploy/scripts/slo-gate.sh || (kubectl -n gaming-platform rollout undo deploy/frontend && exit 1)
+          ./deploy/scripts/canary.sh "$IMAGE:${{ github.sha }}" 50
+          ./deploy/scripts/slo-gate.sh || (kubectl -n gaming-platform rollout undo deploy/frontend && exit 1)
+          ./deploy/scripts/canary.sh "$IMAGE:${{ github.sha }}" 100
+
+  post-deploy:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify /version + health
+        run: ./deploy/scripts/verify-release.sh "${{ github.sha }}"
+      - name: Auto-rollback on failed verification
+        if: failure()
+        run: kubectl -n gaming-platform rollout undo deploy/frontend

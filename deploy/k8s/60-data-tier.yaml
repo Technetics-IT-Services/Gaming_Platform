@@ -1,0 +1,84 @@
+# =============================================================================
+# Data tier: PVCs + StatefulSet stubs (Phase 7, STEP 4 & 5).
+# NOTE: production PostgreSQL + Redis should run as MANAGED services (RDS/Cloud
+# SQL/ElastiCache) or via a mature operator (CloudNativePG / Redis Operator).
+# These manifests document the in-cluster fallback + the persistent claims.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: gaming-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: fast-ssd
+  resources: { requests: { storage: 100Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: gaming-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: fast-ssd
+  resources: { requests: { storage: 20Gi } }
+---
+# Connection pooler (PgBouncer) in front of PostgreSQL — transaction pooling.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: gaming-platform
+  labels: { app.kubernetes.io/name: pgbouncer }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app.kubernetes.io/name: pgbouncer } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: pgbouncer }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: pgbouncer
+          image: bitnami/pgbouncer:1
+          envFrom: [{ secretRef: { name: gaming-platform-secrets } }]
+          env:
+            - { name: PGBOUNCER_POOL_MODE, value: transaction }
+            - { name: PGBOUNCER_MAX_CLIENT_CONN, value: "1000" }
+            - { name: PGBOUNCER_DEFAULT_POOL_SIZE, value: "25" }
+          ports: [{ containerPort: 6432, name: pgbouncer }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: gaming-platform
+spec:
+  selector: { app.kubernetes.io/name: pgbouncer }
+  ports: [{ port: 6432, targetPort: pgbouncer }]
+---
+# One-shot migration runner (Phase 7, STEP 4). Run as a Job before a release cut.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: gaming-platform
+  annotations: { "helm.sh/hook": pre-upgrade } # or gated by the release pipeline
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata: { labels: { app.kubernetes.io/name: db-migrate } }
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true, runAsUser: 1001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: migrate
+          image: ghcr.io/gaming-platform/backend:__IMAGE_TAG__
+          command: ["pnpm", "prisma", "migrate", "deploy"]
+          envFrom: [{ secretRef: { name: gaming-platform-secrets } }]
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
