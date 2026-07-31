@@ -945,3 +945,71 @@ Integrates with the Operations RBAC by reusing its `Role` + `AuthContext` (impor
 Operations is unmodified) and layering `CrmPermission`s on top. Deny-by-default; `enforce()` audits
 allow **and** deny; cryptographically-random secure ids; masked PII. **Not implemented (by design):**
 affiliate portal, BI dashboards.
+
+## 24. Partner, affiliate & multi-tenant platform (Phase 6C)
+
+An enterprise growth/distribution layer: `Partners → Partner Platform → Operations APIs → CRM APIs →
+Platform Services`. It manages business relationships, commissions, white-label brands and partner
+reporting. It **owns no gameplay and no money** — commission is **LOGICAL accounting only**, never a
+ledger posting. **Zero platform change**: nothing under runtime, games, wallet, ledger, treasury,
+payments, compliance, operations, CRM or settlement is modified — purely additive, consuming existing
+data through a read-only `PlayerFinancialPort`. Module: `src/lib/partners/` (framework-agnostic TS).
+
+### 24.1 Partner platform architecture (STEP 1)
+
+`PartnerPlatform` is the RBAC + tenant-isolation facade composing the sub-services (`PartnerService`,
+`AffiliateService`, `AgentHierarchy`, `CommissionEngine`, `WhiteLabelPlatform`, `PartnerReporting`,
+`PartnerDashboard`). `PartnerService` owns partner profiles, status (validated transitions), lifecycle,
+notes and settings, with `PartnerAudit` on every action. PII is masked; ids are cryptographically
+random.
+
+### 24.2 Affiliate platform (STEP 2)
+
+`AffiliateService` — affiliate profiles, tracking codes + links, campaign tracking, a click →
+register → qualify conversion funnel, and **attribution models** (first-click keeps the first;
+last-click overwrites). It records marketing attribution only — it grants nothing and moves no money.
+
+### 24.3 Agent hierarchy (STEP 3)
+
+`AgentHierarchy` — a Master-Agent → Sub-Agent → Dealer tree with validated links, configurable
+**depth limits**, and **cycle detection** (a parent may not be a descendant of the child;
+self/double-parenting rejected). Exposes ancestors (roll-up), descendants (downline) and tree build.
+
+### 24.4 Commission engine (STEP 4)
+
+`CommissionEngine` — computes commissions across **CPA / Revenue-Share / Hybrid / Fixed / Percentage /
+Tiered** models (basis-point math, ascending tiers), records entries with a validated status
+lifecycle (Pending → Approved → Paid, plus Rejected/Adjusted), supports **manual adjustments**, and
+keeps a per-partner **logical balance + history**. **Logical accounting ONLY — no ledger postings, no
+money movement.** Payout of an approved balance is a deferred Treasury/Operations concern.
+
+### 24.5 White-label platform (STEP 5)
+
+`WhiteLabelPlatform` — multi-tenant brand management: tenant + brand + **theme** (logo/colors/assets),
+**domain mapping** (unique host → tenant), **localization** + **currency** configuration, and
+per-tenant **feature flags**, with `resolveByHost` as the multi-tenant entry point. Pure configuration.
+
+### 24.6 Partner reporting (STEP 6)
+
+`PartnerReporting` — read-only **acquisition** (clicks/registrations/qualified/rate), **revenue**
+(NGR/LTV/retention over attributed players), **commission summary**, and a **network roll-up** across
+the downline, with export-ready `{columns, rows}` + a CSV serializer. Financial figures come from the
+read-only `PlayerFinancialPort` (logical NGR = deposits − withdrawals) — nothing moves money.
+
+### 24.7 Partner RBAC (STEP 7)
+
+`PartnerRBAC` — five roles (Partner Owner, Partner Admin, Affiliate, Agent, Read-Only), scoped
+permissions, permission groups, deny-by-default. **Tenant isolation** (`assertTenant`) is enforced on
+every partner-scoped call so a principal can only touch its own tenant's resources.
+
+### 24.8 API platform & dashboard (STEP 8 & 10)
+
+`PartnerPlatform` exposes the partner/affiliate/white-label/reporting/export APIs; every call carries
+a `PartnerAuthContext`, is permission + tenant checked **before** work, and is audited (allow AND
+deny). `PartnerDashboard.overview` returns partner profile + acquisition + revenue + commission +
+sub-partner count. Read-only financial summaries only — no financial execution.
+
+### 24.9 Security (STEP 9)
+
+RBAC enforcement + tenant isolation + audit on every action; cryptographically-random secure ids;
+masked PII. **Not implemented (by design):** BI dashboards.
