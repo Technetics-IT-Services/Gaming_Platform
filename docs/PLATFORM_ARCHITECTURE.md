@@ -1236,3 +1236,31 @@ Additive: `src/lib/resilience/` + `deploy/ha/` overlays + HA/SRE docs. See `docs
   retry-budget/fallback, composed wrapper, adaptive limiter/backpressure/degradation, leader election,
   health routing, chaos, capacity, SLO/error-budget). Full suite **429 green**. Every game-day asserts
   `ledger.reconcile().systemSum === 0` — resilience never compromises financial integrity.
+
+## 30. Performance validation & production qualification (Phase 11)
+
+Performance tooling, benchmarking, profiling and qualification — **only measurement/reporting was
+added**. **Zero** business, financial or architectural change; every frozen module is untouched
+(imported for benchmarking, never modified). Additive: `src/lib/perf/` + performance docs. See
+`docs/PERFORMANCE_GUIDE.md`, `LOAD_TESTING_GUIDE.md`, `CAPACITY_REPORT.md`, `QUALIFICATION_REPORT.md`.
+
+- **Benchmark platform (STEP 1):** `Benchmark`/`BenchmarkSuite` (warmup + N iterations, injectable
+  clock → ops/sec + percentiles), `LatencyHistogram` (nearest-rank P50/P90/P95/P99/max), `arrivalSchedule`
+  (steady/burst/ramp/mixed synthetic traffic), report generator.
+- **Load & stress (STEP 2/3):** `runLoad` (closed-loop concurrency → throughput + error rate + latency),
+  `stressRamp` (ramp to the SLO knee); covers API/worker/background + queue/connection/CPU/DB/Redis
+  pressure via injected op models.
+- **Soak (STEP 4):** `analyzeTrend`/`soakReport` — least-squares slope + R² leak detection over memory/
+  connection/queue series.
+- **Latency & profiling (STEP 5/6):** `Profiler` (span timing + allocation hook), `QueryProfiler`
+  (top-N slow queries), `CacheStats` (hit ratio).
+- **Capacity validation (STEP 7):** validates Phase-10 sizing + autoscaling + SLO/error-budget
+  (`docs/CAPACITY_REPORT.md`).
+- **Regression (STEP 8):** `RegressionChecker` (baseline compare + per-metric thresholds + direction) +
+  trend reporting — a release gate.
+- **Qualification (STEP 9):** `qualify`/`scorecardReport` grade throughput/latency/availability/
+  scalability/resource vs targets → a pass/warn/fail scorecard (`docs/QUALIFICATION_REPORT.md`).
+- **Testing (STEP 11):** `perf.test.ts` — 10 deterministic tests (percentiles, benchmark, workloads,
+  load, stress knee, leak detection, profiling, regression, qualification) **plus a real micro-benchmark
+  of the frozen ledger** that asserts throughput AND `ledger.reconcile().systemSum === 0` afterward.
+  Full suite **439 green**. Measurement never perturbs financial integrity.
