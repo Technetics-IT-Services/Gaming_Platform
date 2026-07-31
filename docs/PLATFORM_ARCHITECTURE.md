@@ -1013,3 +1013,92 @@ sub-partner count. Read-only financial summaries only — no financial execution
 
 RBAC enforcement + tenant isolation + audit on every action; cryptographically-random secure ids;
 masked PII. **Not implemented (by design):** BI dashboards.
+
+## 25. Analytics, BI & observability platform (Phase 6D)
+
+The enterprise intelligence layer: `Platform Services → Analytics → BI → Observability → Dashboards`.
+It **measures, aggregates and visualizes** existing platform activity and is strictly **read-only** —
+it owns no gameplay, no money, and changes no business logic. **Zero platform change**: nothing under
+runtime, games, wallet, ledger, treasury, payments, compliance, operations, CRM, partner or settlement
+is modified — purely additive, consuming the frozen services through read-only ports. Module:
+`src/lib/analytics/` (framework-agnostic TS).
+
+### 25.1 Analytics platform architecture (STEP 1)
+
+`AnalyticsService` ingests `AnalyticsEvent`s the app emits, updating a `MetricsRegistry`
+(counter/gauge/histogram) and a `TimeSeriesStore` (bucketed points + `DimensionModel`), with an
+`AggregationEngine` (sum/count/avg/min/max/distinct). `AnalyticsPlatform` is the RBAC-enforced facade
+composing every analytics/BI/observability/monitoring/warehouse service.
+
+### 25.2 Executive KPI platform (STEP 2)
+
+`KPIEngine.compute` derives the executive set from the event stream + financial port: **revenue, NGR,
+DAU, MAU, new players, retention, churn, LTV, ARPU, ARPPU, conversion, growth** — deterministic,
+tenant-scopable, point-in-time.
+
+### 25.3 Financial BI (STEP 3)
+
+`FinancialBI` — deposit/withdrawal analytics, **payment success rate**, treasury figures (from the
+read-only snapshot port), commission, **net cashflow** and a daily **cashflow trend**, with CSV
+export. Read-only — the ledger/treasury remain the source of truth; every figure is derived.
+
+### 25.4 Player analytics (STEP 4)
+
+`PlayerAnalytics` — session analytics (start/end pairing), game popularity ranking, behaviour
+(bets/deposits per active player), **retention cohorts** (day-N), and **funnels** (ordered
+distinct-player conversion).
+
+### 25.5 Fraud & compliance analytics (STEP 5)
+
+`FraudComplianceAnalyticsService` — over the compliance decision stream: **risk distribution**,
+decision/**fraud trends**, **AML/KYC control metrics**, compliance workload (manual-review queue),
+and top reason codes. Consumes a read-only port — Compliance is not modified.
+
+### 25.6 Observability platform (STEP 6)
+
+`Observability` — distributed **tracing** (spans + traces by correlation id), a **request timeline**,
+structured **logs** (with error-rate), **latency** percentiles (p50/p95/p99), and a service
+**dependency graph** derived from parent→child span services. Records what the app hands it — it
+never instruments a frozen service.
+
+### 25.7 Monitoring & alerting (STEP 7)
+
+`MonitoringService` — a **health dashboard** over the read-only health port (+ error rate, latency
+p95, queue depth, cache hit-rate gauges), a configurable **alert-rule engine** (metric / comparator /
+threshold / severity) that fires `Alert`s, and **channels** (email/slack/webhook/pagerduty) for
+delivery.
+
+### 25.8 Data platform / warehouse (STEP 8)
+
+`WarehouseService` — point-in-time **snapshots**, historical **KPI trend** read models, **scheduled
+reports**, typed **ETL contracts**, and CSV **warehouse export**. Everything is a read model over the
+analytics/BI outputs.
+
+### 25.9 Security & APIs (STEP 9 & 10)
+
+`AnalyticsRBAC` — six roles (Executive, Analyst, Finance Analyst, Compliance Analyst, SRE, Read-Only),
+scoped permissions, deny-by-default, **tenant-aware** analytics (a tenant-scoped principal only sees
+its tenant's data), PII masking (`maskPlayerId`), secure-export gating, and an audit record on every
+query (allow AND deny). The facade exposes the analytics / dashboard / reporting / metrics / health /
+observability / export APIs — all read-only.
+
+---
+
+## Enterprise platform — final state
+
+Phases 5A → 6D layered a complete enterprise real-money-gaming platform on the **permanently frozen**
+Runtime + Ledger, each phase strictly additive and read-only toward the layers beneath it:
+
+| Phase | Layer | Module | Owns money? |
+|---|---|---|---|
+| 5A | Double-entry ledger + wallet | `lib/ledger` | ✅ source of truth |
+| 5B | Payment platform + gateways | `lib/payments` | via ledger |
+| 5C | Withdrawals + treasury | `lib/treasury` | via ledger |
+| 5D | Risk & compliance | `lib/compliance` | ❌ decides only |
+| 6A | Operations & administration | `lib/operations` | ❌ read-only |
+| 6B | CRM, loyalty & marketing | `lib/crm` | ❌ logical bonuses |
+| 6C | Partner, affiliate & multi-tenant | `lib/partners` | ❌ logical commission |
+| 6D | Analytics, BI & observability | `lib/analytics` | ❌ read-only |
+
+Every phase kept the Runtime, Game Engines, Registry, providers, Settlement, Event Bus and Session
+Manager untouched; money movement stays exclusively double-entry through the ledger.
