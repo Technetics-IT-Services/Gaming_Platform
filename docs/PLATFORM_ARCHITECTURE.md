@@ -1171,3 +1171,36 @@ only: `src/lib/security/` + security docs. See `docs/SECURITY_ARCHITECTURE.md`, 
 - **Testing (STEP 10):** `src/lib/security/security.test.ts` — headers/CSP/cookies, validation/encoding/
   CSRF/SSRF, MFA (RFC vector), password/lockout, session rotation+reuse, secret rotation+audit,
   monitoring/SIEM, evidence + mappings, incident lifecycle, RBAC (16 tests). Full suite **397 green**.
+
+## 28. Production service integrations & external providers (Phase 9)
+
+Replaces mock/reference implementations with production adapters — **only adapters change**.
+Architecture and interfaces are frozen; every adapter `implements` an existing platform interface and
+swaps by configuration. **Zero modification** to any frozen module (adapters only *import* their
+interfaces). Module: `src/lib/integrations/`. See `docs/INTEGRATIONS.md`.
+
+- **Transport core:** injectable `HttpTransport` (+ `FetchTransport`), `withRetry` (exponential
+  backoff, retryable-only), `ProviderError`, and Web Crypto helpers (HMAC/SHA/base64/hex) — so every
+  adapter is contract-testable without live network.
+- **Payments (STEP 1):** `PayPalProvider implements IPaymentProvider` — OAuth2, create-order/capture/
+  refund, webhook verification via PayPal's verify-signature API, `PayPal-Request-Id` idempotency,
+  retries, health. (Stripe/Razorpay/Cashfree/PhonePe remain the frozen Phase-5B adapters.)
+- **Notifications (STEP 2):** SES (email), Twilio (SMS, with authentic HMAC-SHA1 signature verify),
+  FCM (push) — all `implements INotificationProvider`, with delivery refs + webhook verification.
+- **Storage (STEP 3):** new `IObjectStorage` with S3 (authentic **SigV4** presigned URLs via Web
+  Crypto), GCS and Azure Blob — uploads/downloads/signed-URLs/SSE/versioning/lifecycle.
+- **Secrets (STEP 4):** AWS Secrets Manager, Vault (also `IVaultProvider`), Azure Key Vault, GCP —
+  all `implements ISecretProvider` (the frozen `SecretManager` versioning/rotation/audit is unchanged).
+- **KMS (STEP 6):** AWS KMS + `LocalKMSProvider` `implements IKMSProvider`; envelope AES-256-GCM
+  encrypt/decrypt (data key wrapped by the CMK).
+- **SIEM/Observability (STEP 7):** Splunk HEC / Elastic / Datadog `implements ISIEMForwarder`; OTel +
+  Prometheus exporters.
+- **Identity (STEP 5):** `WebAuthnServerProvider implements IWebAuthnProvider` (challenge lifecycle),
+  `IpReputationDeviceProvider implements IDeviceTrustProvider`, OIDC adapter + SAML interface.
+- **Background/DB (STEP 8/9):** `RedisReliableQueue` (LMOVE reserve → ack/nack → DLQ) + Redis and
+  Postgres health probes that plug into the Phase-7 `HealthRegistry`.
+- **Registry (STEP 12):** `registry.ts` factories select each adapter by env config behind the frozen
+  interface — swapping a provider is configuration, not code.
+- **Testing (STEP 10):** `integrations.test.ts` — 15 contract tests (retry/failover, PayPal
+  order/capture/webhook/idempotency, Twilio signature, S3 SigV4, secret round-trips, envelope
+  encryption, SIEM forward, WebAuthn, reliable queue + DLQ + health). Full suite **412 green**.
