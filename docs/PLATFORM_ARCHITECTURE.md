@@ -1139,3 +1139,35 @@ operational docs. See `docs/INFRASTRUCTURE.md`, `docs/DISASTER_RECOVERY.md`, `do
 - **Testing (STEP 11):** `src/lib/infra/infra.test.ts` — config validation/masking, feature-flag
   scoping, tenant config, queue/DLQ, worker retry→backoff→dead-letter + lifecycle, scheduler, health
   aggregation, version/semver (13 tests). All deploy YAML is schema-valid.
+
+## 27. Production security, compliance & trust platform (Phase 8)
+
+Security that **wraps** the frozen Enterprise Platform — no business, financial or infrastructure
+logic changed. **Zero modification** to Runtime, Games, Wallet, Ledger, Treasury, Payments,
+Compliance business rules, Operations, CRM, Partner, Analytics, Infrastructure or Settlement. Additive
+only: `src/lib/security/` + security docs. See `docs/SECURITY_ARCHITECTURE.md`, `HARDENING_GUIDE.md`,
+`COMPLIANCE_MAPPING.md`, `INCIDENT_RESPONSE.md`, `SECURITY_REVIEW.md`.
+
+- **Application security (STEP 1):** strict nonce-based CSP + full security-header set (HSTS/frame/
+  referrer/permissions/COOP/CORP), `__Host-` secure cookies, CSRF double-submit, input-validation
+  framework, context-aware output encoders (anti-XSS), SSRF allow-list guard.
+- **Identity (STEP 2):** MFA — RFC 6238 TOTP over Web Crypto (validated against the RFC test vector) +
+  WebAuthn interface; password policy; account lockout; secure sessions with refresh-token **rotation
+  + reuse detection** (theft ⇒ revoke) + access-token blacklist.
+- **Secrets (STEP 3):** `SecretManager` over `ISecretProvider` (KMS/Vault interfaces), key versioning,
+  rotation with grace decryption, access audit (values never logged).
+- **Container & supply chain (STEP 4/5):** documented — non-root/read-only/dropped-caps, cosign image
+  signing, SBOM, admission policy; SAST/DAST/SCA/secret-scan/license CI gates (`HARDENING_GUIDE.md`).
+- **Monitoring (STEP 6):** append-only security event stream, threat indicators, anomaly contracts,
+  `ISIEMForwarder` (auto-forwards High/Critical), SOC export.
+- **Compliance evidence (STEP 7):** control registry with OWASP ASVS / PCI DSS / ISO 27001 / SOC2
+  mappings, evidence + policy registries, coverage metrics, auditor-ready export matrix.
+- **Incident response (STEP 8):** incident model + severity + validated lifecycle + escalation matrix
+  + forensic checklist that gates SEV1/SEV2 close; breach + postmortem guides.
+- **API platform (STEP 9):** `SecurityPlatform` — 5-role RBAC, read-only security/evidence/policy/
+  incident/export/config APIs, audits allow AND deny.
+- **Security review (STEP 12):** STRIDE threat model, attack-surface review, OWASP Top-10 pass, ASVS
+  L2 checklist, hardening + pen-test-readiness checklists (`SECURITY_REVIEW.md`).
+- **Testing (STEP 10):** `src/lib/security/security.test.ts` — headers/CSP/cookies, validation/encoding/
+  CSRF/SSRF, MFA (RFC vector), password/lockout, session rotation+reuse, secret rotation+audit,
+  monitoring/SIEM, evidence + mappings, incident lifecycle, RBAC (16 tests). Full suite **397 green**.
