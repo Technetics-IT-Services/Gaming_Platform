@@ -1,0 +1,96 @@
+// Support ticketing — real, persisted player↔operator conversations.
+//
+// Before this there was no ticket model at all and the support page was static (honestly so). These
+// are the smallest models that carry the required lifecycle; nothing speculative is added.
+//
+// Additive: no existing table is modified, and nothing here touches money.
+
+enum SupportTicketStatus {
+  OPEN // created by the player, not yet picked up
+  IN_PROGRESS // an agent has replied or taken it
+  WAITING_ON_PLAYER // agent asked a question, awaiting the player
+  RESOLVED // agent considers it done; the player may reopen
+  CLOSED //finally closed; reopening creates activity again
+
+  @@map("support_ticket_status")
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+
+  @@map("support_ticket_priority")
+}
+
+enum SupportTicketCategory {
+  ACCOUNT
+  DEPOSIT
+  WITHDRAWAL
+  GAME
+  BONUS
+  TECHNICAL
+  RESPONSIBLE_GAMING
+  OTHER
+
+  @@map("support_ticket_category")
+}
+
+/// One support conversation, owned by exactly one player.
+///
+/// `userId` is the ownership anchor: every player-facing query filters on it, which is what makes
+/// cross-player access (IDOR) structurally impossible rather than a check that could be forgotten.
+model SupportTicket {
+  id       String                @id @default(uuid(7)) @db.Uuid
+  /// Short human reference shown to the player (e.g. "TKT-3F9A2C").
+  reference String               @unique
+  userId   String                @map("user_id") @db.Uuid
+  subject  String
+  category SupportTicketCategory @default(OTHER)
+  priority SupportTicketPriority @default(NORMAL)
+  status   SupportTicketStatus   @default(OPEN)
+
+  /// Agent currently handling it. NULL = unassigned queue.
+  assignedToUserId String? @map("assigned_to_user_id") @db.Uuid
+
+  /// Denormalised for queue ordering without joining the message table.
+  lastMessageAt DateTime  @default(now()) @map("last_message_at")
+  closedAt      DateTime? @map("closed_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user       User                   @relation("SupportTicketOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assignedTo User?                  @relation("SupportTicketAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  messages   SupportTicketMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status, priority, lastMessageAt])
+  @@index([assignedToUserId, status])
+  @@map("support_tickets")
+}
+
+/// One message on a ticket, from the player or from an agent.
+///
+/// `isFromAgent` is derived SERVER-SIDE from the authenticated author's permissions — it is never
+/// accepted from the client, so a player cannot post a message that appears to come from support.
+model SupportTicketMessage {
+  id       String  @id @default(uuid(7)) @db.Uuid
+  ticketId String  @map("ticket_id") @db.Uuid
+  authorUserId String @map("author_user_id") @db.Uuid
+  isFromAgent  Boolean @default(false) @map("is_from_agent")
+  body     String
+
+  /// Agent-only note the player must never see.
+  isInternal Boolean @default(false) @map("is_internal")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  author User          @relation("SupportMessageAuthor", fields: [authorUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
+}

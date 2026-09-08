@@ -1,0 +1,72 @@
+// Partner principal — revenue-share stakeholders.
+//
+// SCOPE, deliberately narrow: this file models WHO a partner is and WHAT SHARE they hold. It models
+// no money. There is no partner wallet, no balance column, no commission table and no payout record,
+// because the platform has no definition of revenue and no expense model, so any such figure would be
+// fabricated. Partner earnings stay BLOCKED until that definition exists (see PHASE_2D4_AUDIT.md §3).
+//
+// Partners authenticate through the EXISTING user/auth system via PartnerUser — no second identity
+// or authentication system is introduced.
+
+enum PartnerStatus {
+  PENDING // created, not yet trading
+  ACTIVE // live
+  SUSPENDED // temporarily stopped by an operator
+  TERMINATED // ended; retained for history
+
+  @@map("partner_status")
+}
+
+/// A revenue-share stakeholder.
+///
+/// `revenueSharePercent` is CONFIGURATION set by a super-admin, not a computed financial value. The
+/// service enforces that the sum across ACTIVE partners never exceeds 100 — over-allocation is
+/// invalid under any reading of the requirement. It deliberately does NOT require the sum to equal
+/// 100, which would assume the house retains nothing (an invented business rule).
+model Partner {
+  id     String        @id @default(uuid(7)) @db.Uuid
+  /// Short stable operator-facing identifier, e.g. "PTR-4F2A".
+  code   String        @unique
+  name   String
+  status PartnerStatus @default(PENDING)
+
+  /// Percentage of distributable net profit. Decimal, never a float. 0–100 with 4 dp.
+  /// A SHARE, not an amount: no currency is attached because no money is stored here.
+  revenueSharePercent Decimal @default(0) @map("revenue_share_percent") @db.Decimal(7, 4)
+
+  notes String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  users PartnerUser[]
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("partners")
+}
+
+/// Links an existing platform User to a Partner.
+///
+/// The unique constraint on `userId` is the isolation anchor: one user belongs to at most one
+/// partner, so "which partner am I?" is unambiguous and a partner-scoped query can never resolve to
+/// two organisations.
+model PartnerUser {
+  id        String @id @default(uuid(7)) @db.Uuid
+  partnerId String @map("partner_id") @db.Uuid
+  /// One user → at most one partner.
+  userId    String @unique @map("user_id") @db.Uuid
+
+  /// True for the partner's primary contact. Informational only; it grants no extra permission.
+  isPrimary Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User    @relation("PartnerMembership", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([partnerId])
+  @@map("partner_users")
+}

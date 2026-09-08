@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { MetricsService } from './metrics.service';
 import { QueueService } from './queue.service';
 
@@ -55,5 +58,26 @@ describe('QueueService', () => {
     } finally {
       queue.onModuleDestroy();
     }
+  });
+});
+
+/**
+ * Phase 2D.11 — the monitoring sampler must never be able to kill the process.
+ *
+ * Regression for a real defect: `setInterval(() => void this.sample(), …)` discarded the promise,
+ * so a transient database error inside a sampling cycle became an unhandled rejection — and an
+ * unhandled rejection terminates the Node process. Observed once during a full serial test run.
+ */
+describe('MonitoringService — a failing sample cannot crash the process', () => {
+  it('catches the rejection at the interval callback', () => {
+    // Comments are stripped first: the fix's own note QUOTES the dangerous shape in order to
+    // explain it, and scanning the raw file would flag that explanation.
+    const src = readFileSync(join(__dirname, 'monitoring.service.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    // The dangerous shape must not return.
+    expect(src).not.toContain('void this.sample()');
+    // And the promise must be caught.
+    expect(src).toMatch(/this\.sample\(\)\s*\.catch\(/);
   });
 });

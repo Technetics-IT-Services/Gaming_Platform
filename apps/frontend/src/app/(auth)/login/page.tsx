@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { authApi } from '@/lib/auth-api';
 import { clientConfig } from '@/lib/config';
 import { createDemoSession, persistDemoSession } from '@/lib/demo-session';
+import { notifyLogin } from '@/lib/auth-session';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { usePlayerProfile } from '@/stores/player-profile';
@@ -22,11 +23,15 @@ const WELCOME_BONUS = 10_000;
 export default function LoginPage() {
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
+  const setDemoSession = useAuthStore((s) => s.setDemoSession);
 
   /** Guest sign-in: create a demo session + generate a full player profile. */
   const enterDemo = (email: string) => {
-    const { user, accessToken } = createDemoSession(email);
-    setSession(user, accessToken);
+    const { user } = createDemoSession(email);
+    // setDemoSession (NOT setSession) marks the session explicitly demo and holds no credential, so
+    // the api-client never authenticates as this user, never refreshes on a backend 401 and never
+    // tears the session down — the Phase 2C.15 redirect loop cannot happen.
+    setDemoSession(user);
     persistDemoSession(email); // survive reloads (demo mode)
     usePlayerProfile.getState().setUsername(email.split('@')[0] || 'player');
     // Welcome Bonus — new demo sessions start at ₹0; grant a starter bonus once
@@ -82,6 +87,7 @@ export default function LoginPage() {
         return;
       }
       if (result.session) {
+        notifyLogin();
         setSession(result.session.user, result.session.tokens.accessToken);
         toast.success('Welcome back!');
         router.push('/dashboard');
@@ -96,6 +102,7 @@ export default function LoginPage() {
     setVerifying(true);
     try {
       const session = await authApi.verifyTwoFactorLogin({ challengeToken, code: twoFactorCode });
+      notifyLogin();
       setSession(session.user, session.tokens.accessToken);
       toast.success('Welcome back!');
       router.push('/dashboard');
@@ -124,6 +131,10 @@ export default function LoginPage() {
             inputMode="numeric"
             autoComplete="one-time-code"
             autoFocus
+            // Phase 2D.2: mobile certification measured this field below the 44px comfortable touch
+            // target at 375/390/412 (the shared rem scale renders smaller than nominal). Pinned in
+            // explicit pixels — this is the one field standing between an operator and their account.
+            style={{ minHeight: 48, fontSize: 18, letterSpacing: '0.2em', textAlign: 'center' }}
             value={twoFactorCode}
             onChange={(e) => setTwoFactorCode(e.target.value)}
           />
@@ -131,6 +142,8 @@ export default function LoginPage() {
         <Button
           variant="gradient"
           className="w-full"
+          // Phase 2D.2: measured at 35px on mobile — pinned to the 44px comfortable touch target.
+          style={{ minHeight: 48 }}
           disabled={verifying || twoFactorCode.length < 6}
           onClick={() => void submitTwoFactor()}
         >
@@ -139,6 +152,7 @@ export default function LoginPage() {
         <button
           type="button"
           className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
+          style={{ minHeight: 44 }}
           onClick={() => setChallengeToken(null)}
         >
           Back to sign in

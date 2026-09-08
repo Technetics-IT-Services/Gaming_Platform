@@ -4,13 +4,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Clock, Flame, Layers, Sparkles, Star, TrendingUp } from 'lucide-react';
 import Link from 'next/link';
 
+import { useRealSession } from '@/hooks/use-real-session';
 import { gamesApi } from '@/lib/games-api';
-import { useAuthStore } from '@/stores/auth-store';
 import { FeaturedCarousel } from './featured-carousel';
 import { GameShelf } from './game-shelf';
 
 export function HomeSections() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  // User-scoped shelves need a REAL backend session; a demo session would 401 (Phase 2C.15).
+  const realSession = useRealSession();
 
   const featured = useQuery({ queryKey: ['shelf', 'featured'], queryFn: () => gamesApi.featured() });
   const trending = useQuery({ queryKey: ['shelf', 'trending'], queryFn: () => gamesApi.trending() });
@@ -22,12 +23,12 @@ export function HomeSections() {
   const recommended = useQuery({
     queryKey: ['shelf', 'recommended'],
     queryFn: () => gamesApi.recommended(),
-    enabled: isAuthenticated,
+    enabled: realSession,
   });
   const recentlyPlayed = useQuery({
     queryKey: ['shelf', 'recently-played'],
     queryFn: () => gamesApi.recentlyPlayed(),
-    enabled: isAuthenticated,
+    enabled: realSession,
   });
 
   return (
@@ -52,7 +53,7 @@ export function HomeSections() {
         </div>
       ) : null}
 
-      {isAuthenticated ? (
+      {realSession ? (
         <GameShelf
           title="Continue playing"
           icon={<Clock className="h-5 w-5 text-accent" />}
@@ -69,7 +70,7 @@ export function HomeSections() {
         viewAllHref="/games?sort=trending"
       />
 
-      {isAuthenticated ? (
+      {realSession ? (
         <GameShelf
           title="Recommended for you"
           icon={<Star className="h-5 w-5 text-primary" />}

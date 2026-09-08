@@ -26,6 +26,12 @@ export class UsersController {
     return this.usersService.updateProfile(userId, dto);
   }
 
+  @Get('me/verification')
+  @ApiOperation({ summary: 'The authenticated user’s verification status (email / phone / identity)' })
+  myVerification(@CurrentUser('id') userId: string) {
+    return this.usersService.verification(userId);
+  }
+
   @Get(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Fetch a user by id (admin only)' })

@@ -57,6 +57,21 @@ export const envSchema = z.object({
   ACCOUNT_LOCK_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   ACCOUNT_LOCK_DURATION_MINUTES: z.coerce.number().int().positive().default(15),
   MAX_CONCURRENT_SESSIONS: z.coerce.number().int().positive().default(5),
+  // Phase 2D.2 — server-authoritative idle-session expiry, in minutes.
+  // 0 = DISABLED (the default). No business figure was supplied for this platform, so no
+  // timeout is invented: with the variable unset, session behaviour is byte-for-byte what it
+  // was before this phase. Set a positive value to enable. BUSINESS-CONFIG REQUIRED.
+  SESSION_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().min(0).default(0),
+
+  /**
+   * Phase 2D.7 (Part B): the largest window a single analytics/report query may scan.
+   *
+   * This is an OPERATIONAL SAFEGUARD, not a business rule — it bounds how much data one request can
+   * make the database aggregate. It is NOT derived from any client requirement. An over-long range
+   * is REJECTED with a clear error; it is never silently truncated to this value, because partial
+   * data presented as complete is worse than no data.
+   */
+  ANALYTICS_MAX_RANGE_DAYS: z.coerce.number().int().min(1).max(3660).default(366),
   PASSWORD_BREACH_CHECK_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

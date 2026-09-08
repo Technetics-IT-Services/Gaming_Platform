@@ -69,7 +69,7 @@ export default function CasinoDetailPage() {
             <div className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-black/10 shadow-glow">
               <GameCover name={g.name} seed={g.id} hint={g.category?.slug} showTitle={false} sizes="360px" />
               <FavoriteButton gameId={g.id} className="absolute right-3 top-3 z-10" />
-              <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur">
+              <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 rounded-full bg-black/65 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
                 <Users className="h-3.5 w-3.5" />
                 <AnimatedNumber value={players} live className="tabular-nums" /> playing

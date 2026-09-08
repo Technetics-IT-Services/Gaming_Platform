@@ -8,12 +8,13 @@ import { useAuthStore } from '@/stores/auth-store';
 /** Shared favorites state: the set of favorited game ids plus a toggle. */
 export function useFavorites() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isDemoSession = useAuthStore((s) => s.isDemoSession);
   const queryClient = useQueryClient();
 
   const idsQuery = useQuery({
     queryKey: ['favorite-ids'],
     queryFn: gamesApi.favoriteIds,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isDemoSession,
     staleTime: 30_000,
   });
 

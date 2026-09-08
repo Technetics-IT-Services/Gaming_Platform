@@ -175,7 +175,7 @@ export function LiveActivityDock() {
                   type="button"
                   onClick={() => toggle(false)}
                   aria-label="Collapse live activity"
-                  className="-m-1 rounded-md p-1 text-muted-foreground/70 transition-colors hover:text-foreground"
+                  className="-m-1 rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
                 </button>

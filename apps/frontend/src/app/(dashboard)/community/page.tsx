@@ -297,7 +297,7 @@ function EventCard({ event, delay }: { event: GameEvent; delay: number }) {
         </span>
         <span className="absolute right-4 top-4">
           {live ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/25 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
@@ -305,7 +305,7 @@ function EventCard({ event, delay }: { event: GameEvent; delay: number }) {
               Live
             </span>
           ) : (
-            <span className="inline-flex items-center rounded-full bg-black/25 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur">
+            <span className="inline-flex items-center rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur">
               Soon
             </span>
           )}

@@ -19,12 +19,12 @@ export interface VipTier {
 export const VIP_TIERS: VipTier[] = [
   {
     key: 'bronze', name: 'Bronze', cashback: 3, weekly: 500, monthly: 2_000, requirement: 0,
-    gradient: 'from-amber-600 to-amber-400', ring: 'ring-amber-500/40',
+    gradient: 'from-amber-800 to-amber-700', ring: 'ring-amber-500/40',
     benefits: ['3% weekly cashback', 'Level-up rewards', 'Standard support'],
   },
   {
     key: 'silver', name: 'Silver', cashback: 5, weekly: 1_500, monthly: 6_000, requirement: 10_000,
-    gradient: 'from-slate-300 to-slate-100', ring: 'ring-slate-400/50',
+    gradient: 'from-slate-600 to-slate-500', ring: 'ring-slate-400/50',
     benefits: ['5% weekly cashback', 'Weekly reload bonus', 'Priority support'],
   },
   {

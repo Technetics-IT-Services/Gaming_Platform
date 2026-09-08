@@ -1,171 +1,80 @@
 'use client';
 
-import { Input, cn } from '@gaming-platform/ui';
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Gift,
-  Lock,
-  Receipt,
-  RotateCcw,
-  Search,
-  Spade,
-  TrendingUp,
-  Unlock,
-  type LucideIcon,
-} from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+/**
+ * Transactions (Phase 2C.9) — server-authoritative wallet history. Replaces the former demo-wallet
+ * list; reads the real, stored `WalletTransaction` rows via `walletApi.history` (Phase 2C.4, JWT
+ * identity). balanceBefore/After are stored values, never derived. Mobile-first; no demo wallet.
+ */
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 
-import { fmtDate, fmtTime } from '@/lib/datetime';
-import { type Transaction, type TxnType, useDemoWallet } from '@/stores/demo-wallet';
+import { RealAccountRequired } from '@/components/auth/real-money-guard';
+import { useRealSession } from '@/hooks/use-real-session';
+import { walletApi } from '@/lib/wallet-api';
 
-const FILTERS: { key: string; label: string; match: (t: TxnType) => boolean }[] = [
-  { key: 'all', label: 'All', match: () => true },
-  { key: 'deposit', label: 'Deposits', match: (t) => t === 'deposit' },
-  { key: 'withdraw', label: 'Withdrawals', match: (t) => t === 'withdraw' },
-  { key: 'vault', label: 'Vault', match: (t) => t === 'vault_in' || t === 'vault_out' },
-  { key: 'bet', label: 'Bets', match: (t) => t === 'bet' },
-  { key: 'win', label: 'Wins', match: (t) => t === 'win' },
-  { key: 'bonus', label: 'Bonuses', match: (t) => t === 'bonus' },
-  { key: 'refund', label: 'Refunds', match: (t) => t === 'refund' },
-];
+const FILTERS = ['ALL', 'DEPOSIT', 'WITHDRAWAL', 'GAME_BET', 'GAME_WIN', 'REFUND'];
 
-const TYPE_META: Record<TxnType, { icon: LucideIcon; tone: string }> = {
-  deposit: { icon: ArrowDownToLine, tone: 'text-emerald' },
-  withdraw: { icon: ArrowUpFromLine, tone: 'text-destructive' },
-  vault_in: { icon: Lock, tone: 'text-violet' },
-  vault_out: { icon: Unlock, tone: 'text-violet' },
-  bet: { icon: Spade, tone: 'text-muted-foreground' },
-  win: { icon: TrendingUp, tone: 'text-emerald' },
-  refund: { icon: RotateCcw, tone: 'text-accent' },
-  bonus: { icon: Gift, tone: 'text-gold' },
-};
-
-export default function TransactionsPage() {
-  const transactions = useDemoWallet((s) => s.transactions);
-  const [filter, setFilter] = useState('all');
-  const [search, setSearch] = useState('');
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
-  const active = FILTERS.find((f) => f.key === filter) ?? FILTERS[0]!;
-  const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return transactions.filter(
-      (t) =>
-        active.match(t.type) &&
-        (!q ||
-          t.ref.toLowerCase().includes(q) ||
-          t.label.toLowerCase().includes(q) ||
-          String(Math.abs(t.amount)).includes(q)),
-    );
-  }, [transactions, active, search]);
-
-  return (
-    <section className="mx-auto w-full max-w-[1180px] space-y-6">
-      <div className="flex items-center gap-4">
-        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <Receipt className="h-6 w-6" />
-        </span>
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight text-foreground">
-            Transactions
-          </h1>
-          <p className="text-sm text-muted-foreground sm:text-base">
-            Your complete demo wallet ledger — deposits, withdrawals, vault moves, bets and wins.
-          </p>
-        </div>
-      </div>
-
-      {/* Filters + search */}
-      <div className="glass-strong flex flex-col gap-3 rounded-2xl p-3 lg:flex-row lg:items-center">
-        <div className="relative lg:w-72">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-accent" />
-          <Input
-            placeholder="Search by reference or amount…"
-            className="h-10 border-black/10 bg-white/60 pl-9"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                'rounded-full px-3 py-1.5 text-sm font-semibold transition-colors',
-                filter === f.key
-                  ? 'bg-primary text-primary-foreground shadow-glow-sm'
-                  : 'bg-white/60 text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Ledger */}
-      <div className="card-premium overflow-hidden p-0">
-        {!mounted ? (
-          <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-            Loading…
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="flex h-48 flex-col items-center justify-center gap-2 text-center">
-            <Receipt className="h-8 w-8 text-muted-foreground/60" />
-            <p className="text-sm text-muted-foreground">No transactions to show.</p>
-          </div>
-        ) : (
-          <ul className="divide-y divide-black/5">
-            {rows.map((t) => (
-              <TxnRow key={t.id} t={t} />
-            ))}
-          </ul>
-        )}
-      </div>
-    </section>
-  );
+function amountColor(type: string): string {
+  if (/WIN|DEPOSIT|REFUND|CREDIT/.test(type)) return '#0f7a4a';
+  if (/BET|WITHDRAWAL|DEBIT|PENALTY/.test(type)) return '#b42318';
+  return '#1b1f37';
+}
+function sign(type: string): string {
+  return /WIN|DEPOSIT|REFUND|CREDIT/.test(type) ? '+' : /BET|WITHDRAWAL|DEBIT|PENALTY/.test(type) ? '−' : '';
 }
 
-function TxnRow({ t }: { t: Transaction }) {
-  const meta = TYPE_META[t.type];
-  const Icon = meta.icon;
-  const positive = t.amount > 0;
+export default function TransactionsPage() {
+  const [type, setType] = useState('ALL');
+  // User-scoped + real-money data: requires a REAL server session (never a demo one).
+  const realSession = useRealSession();
+  const q = useQuery({
+    queryKey: ['transactions', type],
+    queryFn: () => walletApi.history({ limit: 30, type: type === 'ALL' ? undefined : type }),
+    enabled: realSession,
+  });
+  const rows = q.data?.items ?? [];
+
+  // A demo session has no server wallet/ledger — show the real-account notice instead of an
+  // endless empty state (the api-client blocks these endpoints for demo sessions regardless).
+  if (!realSession) return <RealAccountRequired />;
+
   return (
-    <li className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-black/[0.015] sm:px-5">
-      <span
-        className={cn(
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-black/[0.04]',
-          meta.tone,
-        )}
-      >
-        <Icon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-foreground">{t.label}</p>
-        <p className="truncate font-mono text-xs text-muted-foreground">
-          {t.ref} · {fmtDate(t.ts)} · {fmtTime(t.ts)}
-        </p>
+    <div style={{ color: '#1b1f37', maxWidth: 460, margin: '0 auto', padding: '12px 12px 24px', boxSizing: 'border-box' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 800, margin: '0 2px 10px' }}>Transactions</h1>
+
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 12, paddingBottom: 2 }}>
+        {FILTERS.map((f) => (
+          <button key={f} data-testid={`txfilter-${f}`} onClick={() => setType(f)} aria-pressed={type === f}
+            style={{ flex: '0 0 auto', padding: '8px 13px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', border: type === f ? '2px solid #8a5300' : '1px solid #b9c1d4', background: type === f ? '#fff7e6' : '#ffffff', color: '#1b1f37' }}>
+            {f.replace('_', ' ')}
+          </button>
+        ))}
       </div>
-      <div className="shrink-0 text-right">
-        <p
-          className={cn(
-            'font-mono text-sm font-bold tabular-nums',
-            positive ? 'text-emerald' : 'text-foreground',
-          )}
-        >
-          {positive ? '+' : '−'}₹{Math.abs(t.amount).toLocaleString('en-US')}
-        </p>
-        <p className="font-mono text-[11px] text-muted-foreground">
-          Bal ₹{t.balanceAfter.toLocaleString('en-US')}
-        </p>
-      </div>
-      <span className="hidden shrink-0 rounded-full bg-emerald/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald sm:inline">
-        {t.status}
-      </span>
-    </li>
+
+      {q.isLoading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {Array.from({ length: 6 }, (_, i) => <div key={i} style={{ height: 64, borderRadius: 12, background: '#ffffff', border: '1px solid #ccd2e0' }} />)}
+        </div>
+      ) : rows.length === 0 ? (
+        <div data-testid="tx-empty" style={{ textAlign: 'center', color: '#626a7e', fontSize: 14, padding: '40px 0' }}>No transactions to show.</div>
+      ) : (
+        <div data-testid="tx-list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {rows.map((t) => (
+            <div key={t.id} style={{ padding: '12px', borderRadius: 12, background: '#ffffff', border: '1px solid #ccd2e0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{t.type.replace(/_/g, ' ')}</div>
+                  <div style={{ fontSize: 11, color: '#626a7e' }}>{new Date(t.createdAt).toLocaleString()} · {t.status}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: amountColor(t.type) }}>{sign(t.type)}₹{t.amount}</div>
+                  <div style={{ fontSize: 11, color: '#626a7e' }}>Bal ₹{t.balanceAfter}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

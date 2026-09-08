@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { sound } from '@/lib/sound';
+import { DemoFundsBadge } from '@/components/wallet/demo-funds-badge';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { usePlayerProfile } from '@/stores/player-profile';
 
@@ -18,14 +19,14 @@ interface Prize {
 }
 
 const PRIZES: Prize[] = [
-  { label: '500', coins: 500, xp: 0, color: '#7c3aed' },
-  { label: '100 XP', coins: 0, xp: 100, color: '#22d3ee' },
-  { label: '1,000', coins: 1000, xp: 0, color: '#ec4899' },
-  { label: 'BOX', coins: 750, xp: 50, color: '#f59e0b' },
-  { label: '250', coins: 250, xp: 0, color: '#22c55e' },
-  { label: '250 XP', coins: 0, xp: 250, color: '#6366f1' },
-  { label: '2,500', coins: 2500, xp: 0, color: '#db2777' },
-  { label: 'JACKPOT', coins: 5000, xp: 500, color: '#eab308' },
+  { label: '500', coins: 500, xp: 0, color: '#6d28d9' },
+  { label: '100 XP', coins: 0, xp: 100, color: '#0e7490' },
+  { label: '1,000', coins: 1000, xp: 0, color: '#be185d' },
+  { label: 'BOX', coins: 750, xp: 50, color: '#b45309' },
+  { label: '250', coins: 250, xp: 0, color: '#15803d' },
+  { label: '250 XP', coins: 0, xp: 250, color: '#4338ca' },
+  { label: '2,500', coins: 2500, xp: 0, color: '#9d174d' },
+  { label: 'JACKPOT', coins: 5000, xp: 500, color: '#a16207' },
 ];
 const SEG = 360 / PRIZES.length;
 // Deterministic-ish spin sequence so results feel varied but reproducible.
@@ -68,7 +69,9 @@ export function LuckyWheel() {
   return (
     <div className="card-premium relative flex flex-col items-center overflow-hidden p-6">
       <GameFx trigger={fx} />
-      <h3 className="mb-1 font-display text-lg font-bold">Lucky Wheel</h3>
+      <h3 className="mb-1 flex items-center gap-2 font-display text-lg font-bold">
+        Lucky Wheel <DemoFundsBadge />
+      </h3>
       <p className="mb-4 text-sm text-muted-foreground">Spin for coins, XP & jackpots</p>
 
       <div className="relative h-60 w-60">

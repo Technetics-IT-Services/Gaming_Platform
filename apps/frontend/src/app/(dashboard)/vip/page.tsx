@@ -79,7 +79,7 @@ export default function VipPage() {
               <li key={r.label} className="flex items-center justify-between rounded-xl bg-black/[0.03] px-3 py-2.5 text-sm">
                 <span className="flex items-center gap-2 text-muted-foreground">
                   <Sparkles className="h-3.5 w-3.5 text-gold" /> {r.label}
-                  <span className="text-[11px] text-muted-foreground/70">· {r.when}</span>
+                  <span className="text-[11px] text-muted-foreground">· {r.when}</span>
                 </span>
                 <span className="font-mono font-bold tabular-nums text-emerald">+{r.amount.toLocaleString('en-US')}</span>
               </li>

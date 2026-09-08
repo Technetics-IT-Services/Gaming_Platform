@@ -160,7 +160,7 @@ export function Promotions() {
       <SectionHeading
         icon={<Sparkles className="h-5 w-5 text-primary" />}
         title="Today's promotions"
-        action={{ label: 'All promotions', href: '/#promotions' }}
+        action={{ label: 'All promotions', href: '/offers' }}
       />
       <div className="grid gap-4 md:grid-cols-3">
         {PROMOS.map((p, i) => {

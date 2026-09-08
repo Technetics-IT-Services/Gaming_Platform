@@ -20,7 +20,7 @@ const footerLinks = [
       { label: 'Tournaments', href: '/tournaments' },
       { label: 'Leaderboards', href: '/leaderboards' },
       { label: 'Rewards', href: '/rewards' },
-      { label: 'Promotions', href: '/#promotions' },
+      { label: 'Promotions', href: '/offers' },
     ],
   },
   {

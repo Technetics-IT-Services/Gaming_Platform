@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 
-import { authApi } from '@/lib/auth-api';
+import { bootstrapSession } from '@/lib/auth-session';
 import { clientConfig } from '@/lib/config';
 import { createDemoSession, DEMO_SESSION_KEY } from '@/lib/demo-session';
 import { useAuthStore } from '@/stores/auth-store';
@@ -16,7 +16,6 @@ import { usePlayerProfile } from '@/stores/player-profile';
  */
 export function AuthInitializer() {
   useEffect(() => {
-    let active = true;
     const store = useAuthStore.getState();
 
     // Demo fast-path: a persisted demo session is authoritative and available
@@ -30,25 +29,15 @@ export function AuthInitializer() {
         ? window.localStorage.getItem(DEMO_SESSION_KEY)
         : null;
     if (demoEmail) {
-      const { user, accessToken } = createDemoSession(demoEmail);
-      store.setSession(user, accessToken);
+      const { user } = createDemoSession(demoEmail);
+      store.setDemoSession(user); // restored demo session stays explicitly demo
       usePlayerProfile.getState().setUsername(demoEmail.split('@')[0] || 'player');
       return;
     }
 
-    void (async () => {
-      try {
-        const tokens = await authApi.refresh();
-        store.setAccessToken(tokens.accessToken);
-        const user = await authApi.me();
-        if (active) store.setSession(user, tokens.accessToken);
-      } catch {
-        if (active) store.setInitialized(true);
-      }
-    })();
-    return () => {
-      active = false;
-    };
+    // Real session: single-flight, idempotent bootstrap. Safe under StrictMode / remounts — one
+    // refresh, one `/me`, no reuse-detection revocation. The guard waits on the resulting state.
+    void bootstrapSession();
   }, []);
 
   return null;

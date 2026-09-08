@@ -1,0 +1,106 @@
+// Responsible gaming — server-authoritative player protection controls.
+//
+// These are COMPLIANCE CONTROLS, not UI preferences. Everything a limit or restriction decides is
+// persisted here and enforced on the server before any money or game action; nothing depends on
+// React state, localStorage, cookies, client timers or a disabled button.
+//
+// Additive by design: no existing financial table is modified, and enforcement is layered in front
+// of the frozen WalletEngine / GameMoneyBridge rather than inside them.
+
+enum RgLimitType {
+  DEPOSIT // cap on money the player commits to depositing in a period
+  WAGER // cap on total stake in a period
+  LOSS // cap on net loss (stake - payout) in a period
+
+  @@map("rg_limit_type")
+}
+
+enum RgLimitPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+
+  @@map("rg_limit_period")
+}
+
+enum RgRestrictionType {
+  SELF_EXCLUSION // player excludes themselves; may be permanent
+  COOLING_OFF // short, always time-boxed break
+
+  @@map("rg_restriction_type")
+}
+
+enum RgRestrictionStatus {
+  ACTIVE
+  EXPIRED
+  LIFTED
+
+  @@map("rg_restriction_status")
+}
+
+/// A player-set (or operator-set) cap, enforced server-side before money moves.
+///
+/// ONE ACTIVE LIMIT PER (user, type, period, currency) — guaranteed by a partial unique index in the
+/// migration, so a player can never end up with two conflicting caps and no defined winner.
+///
+/// `effectiveFrom` is what makes a limit safe to change: a DECREASE applies immediately, while an
+/// INCREASE is written with a future `effectiveFrom` and the stricter existing limit keeps applying
+/// until then. The delay is configuration (`RG_LIMIT_INCREASE_DELAY_HOURS`), defaulting to 0 —
+/// no cooling-off duration is invented here.
+model ResponsibleGamingLimit {
+  id         String        @id @default(uuid(7)) @db.Uuid
+  userId     String        @map("user_id") @db.Uuid
+  type       RgLimitType
+  period     RgLimitPeriod
+  /// Decimal, never a float. Compared against sums of authoritative financial tables.
+  amount     Decimal       @db.Decimal(20, 8)
+  currencyId String        @map("currency_id") @db.Uuid
+  /// When this limit starts applying. A pending increase sits in the future.
+  effectiveFrom DateTime   @default(now()) @map("effective_from")
+  /// Set when superseded or removed; NULL means this row is the live one.
+  supersededAt DateTime?   @map("superseded_at")
+  /// Who set it — the player themselves, or an operator acting on their behalf.
+  setByUserId String?      @map("set_by_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User     @relation("RgLimitUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  currency Currency @relation(fields: [currencyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, type, period, supersededAt])
+  @@index([userId, supersededAt])
+  @@map("responsible_gaming_limits")
+}
+
+/// A self-exclusion or cooling-off period. While ACTIVE and in-window this blocks BOTH gameplay and
+/// deposits.
+///
+/// Withdrawals are deliberately NOT blocked: a self-excluded player must still be able to take their
+/// own money out. Blocking that would trap funds, which is the opposite of player protection.
+model AccountRestriction {
+  id       String              @id @default(uuid(7)) @db.Uuid
+  userId   String              @map("user_id") @db.Uuid
+  type     RgRestrictionType
+  status   RgRestrictionStatus @default(ACTIVE)
+  startsAt DateTime            @default(now()) @map("starts_at")
+  /// NULL = permanent (self-exclusion only). Cooling-off always has an end.
+  endsAt   DateTime?           @map("ends_at")
+  reason   String?
+
+  /// Who created it. NULL means the player themselves.
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  /// Lifting is an operator action and is always attributed and audited.
+  liftedAt        DateTime? @map("lifted_at")
+  liftedByUserId  String?   @map("lifted_by_user_id") @db.Uuid
+  liftReason      String?   @map("lift_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation("RgRestrictionUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, status, endsAt])
+  @@index([status, endsAt])
+  @@map("account_restrictions")
+}

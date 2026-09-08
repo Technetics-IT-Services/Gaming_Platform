@@ -62,7 +62,7 @@ export function LiveScoreboard({
                 >
                   {hs}
                 </motion.span>
-                <span className="pb-1 text-2xl text-muted-foreground/70">:</span>
+                <span className="pb-1 text-2xl text-muted-foreground">:</span>
                 <motion.span
                   key={`a-${as}`}
                   initial={{ scale: 0.6, opacity: 0, y: -6 }}

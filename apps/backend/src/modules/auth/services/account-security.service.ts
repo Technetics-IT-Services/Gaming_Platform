@@ -2,11 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { SecurityEventType, SecuritySeverity, UserStatus } from '@prisma/client';
 import type { LoginHistorySummary, SecurityEventSummary } from '@gaming-platform/types';
 
+import { NotificationEventsService } from '../../notifications/notification-events.service';
 import { AppConfigService } from '../../../config/app-config.service';
 import type { RequestMeta } from '../../../common/security/request-meta';
 import { PrismaService } from '../../database/prisma.service';
 import { MailService } from '../../mailer/mail.service';
 import { SecurityEventService } from '../../security/security-event.service';
+import { ActivityType } from '@prisma/client';
+import { ActivityEventService } from '../../events/activity-event.service';
 
 export interface LockState {
   locked: boolean;
@@ -24,6 +27,9 @@ export class AccountSecurityService {
     private readonly config: AppConfigService,
     private readonly security: SecurityEventService,
     private readonly mail: MailService,
+    // Phase 2D.1: notify the player when their account is locked or unlocked.
+    private readonly notify: NotificationEventsService,
+    private readonly events: ActivityEventService,
   ) {}
 
   isLocked(user: { lockedUntil: Date | null; status: UserStatus }): boolean {
@@ -31,13 +37,13 @@ export class AccountSecurityService {
     return Boolean(user.lockedUntil && user.lockedUntil.getTime() > Date.now());
   }
 
-  recordLogin(
+  async recordLogin(
     userId: string,
     success: boolean,
     meta: RequestMeta,
     failureReason?: string,
   ): Promise<unknown> {
-    return this.prisma.loginHistory.create({
+    const row = await this.prisma.loginHistory.create({
       data: {
         userId,
         ipAddress: meta.ipAddress,
@@ -48,6 +54,21 @@ export class AccountSecurityService {
         city: meta.city,
       },
     });
+
+    // Phase 2D.9 (X-02): a SUCCESSFUL login is a real activity event. Keyed by the login-history
+    // row id, so the event is exactly as unique as the login it describes. Fire-and-forget — an
+    // analytics row must never be able to fail a sign-in.
+    if (success) {
+      await this.events.record({
+        userId,
+        type: ActivityType.LOGIN,
+        eventKey: `login:${row.id}`,
+        ipAddress: meta.ipAddress ?? null,
+        // Country/city only. No token, no user agent string, no credential.
+        metadata: { countryCode: meta.countryCode ?? null },
+      });
+    }
+    return row;
   }
 
   /** Count a failed attempt and lock the account when the threshold is crossed. */
@@ -99,6 +120,7 @@ export class AccountSecurityService {
       description: 'Account unlocked by administrator',
       meta,
     });
+    await this.notify.accountUnlocked({ userId, at: new Date() });
     return { success: true };
   }
 
@@ -115,6 +137,7 @@ export class AccountSecurityService {
       description: reason ?? 'Account suspended by administrator',
       meta,
     });
+    await this.notify.accountLocked({ userId, reason: reason ?? 'suspended', at: new Date() });
     return { success: true };
   }
 

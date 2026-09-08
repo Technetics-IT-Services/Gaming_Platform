@@ -98,8 +98,9 @@ export function SiteHeader() {
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           {isAuthenticated ? (
             <>
-              {/* On mobile only the profile avatar shows (Stake-style). Search,
-                  VIP, pills and notifications appear from tablet up (md+). */}
+              {/* On mobile the profile avatar and the notification bell show. Search, VIP and the
+                  pills appear from tablet up (md+). The bell is mobile-first (Phase 2D.1): on a phone
+                  it is the only entry point to the notification centre. */}
               <div className="hidden items-center gap-1 sm:gap-2 md:flex">
                 <SearchCommand />
                 <Button asChild variant="gold" size="sm">
@@ -109,8 +110,8 @@ export function SiteHeader() {
                 </Button>
                 <LevelPill />
                 <BalancePill />
-                <NotificationsMenu />
               </div>
+              <NotificationsMenu />
               <UserMenu />
             </>
           ) : (

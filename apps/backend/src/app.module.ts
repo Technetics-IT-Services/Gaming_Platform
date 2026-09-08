@@ -7,9 +7,11 @@ import { AppService } from './app.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { AdminActionAuditInterceptor } from './common/interceptors/admin-action-audit.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { AdminTwoFactorGuard } from './modules/authorization/guards/admin-two-factor.guard';
 import { PermissionsGuard } from './modules/authorization/guards/permissions.guard';
 import { AppConfigService } from './config/app-config.service';
 import { ConfigModule } from './config/config.module';
@@ -27,6 +29,16 @@ import { GamesModule } from './modules/games/games.module';
 import { HealthModule } from './modules/health/health.module';
 import { MailModule } from './modules/mailer/mail.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { EventsModule } from './modules/events/events.module';
+import { BonusAdminModule } from './modules/bonus-admin/bonus-admin.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { PromotionsModule } from './modules/promotions/promotions.module';
+import { ReferralModule } from './modules/referral/referral.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { KycModule } from './modules/kyc/kyc.module';
+import { PartnerModule } from './modules/partner/partner.module';
+import { ResponsibleGamingModule } from './modules/responsible-gaming/responsible-gaming.module';
+import { SupportModule } from './modules/support/support.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { RouletteModule } from './modules/roulette/roulette.module';
@@ -38,6 +50,7 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { WalletEngineModule } from './modules/wallet-engine/wallet-engine.module';
+import { GamingMoneyModule } from './modules/gaming-money/gaming-money.module';
 
 @Module({
   imports: [
@@ -71,6 +84,9 @@ import { WalletEngineModule } from './modules/wallet-engine/wallet-engine.module
     // wallet bridge is available for integration.
     WalletEngineModule,
 
+    // Real-money game bridge (Phase 2B) — composes WalletEngine + DiceEngine.
+    GamingMoneyModule,
+
     // Domain modules
     HealthModule,
     AuthModule,
@@ -87,6 +103,16 @@ import { WalletEngineModule } from './modules/wallet-engine/wallet-engine.module
     WalletModule,
     TransactionsModule,
     NotificationsModule,
+    ResponsibleGamingModule,
+    KycModule,
+    EventsModule,
+    FinanceModule,
+    BonusAdminModule,
+    SettingsModule,
+    ReferralModule,
+    PromotionsModule,
+    PartnerModule,
+    SupportModule,
     AdminModule,
     AnalyticsModule,
   ],
@@ -98,9 +124,15 @@ import { WalletEngineModule } from './modules/wallet-engine/wallet-engine.module
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    // Phase 2D.2: administrator accounts must hold a second factor before ANY admin-API call.
+    // Runs after JwtAuthGuard; it only ever ADDS a requirement and never grants access.
+    { provide: APP_GUARD, useClass: AdminTwoFactorGuard },
     // Global response envelope and request logging.
     { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    // Phase 2D.10 (AD-12): blanket audit of every successful mutating request under /admin/,
+    // attributed to the operator. Closes the wallet-adjustment gap without touching frozen code.
+    { provide: APP_INTERCEPTOR, useClass: AdminActionAuditInterceptor },
     // Global exception normalization.
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],

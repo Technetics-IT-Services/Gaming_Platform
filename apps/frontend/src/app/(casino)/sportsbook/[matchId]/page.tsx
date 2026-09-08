@@ -63,7 +63,7 @@ export default function MatchDetailsPage() {
               {meta ? (
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                   <span aria-hidden>{meta.flag}</span> {meta.name}
-                  {meta.region ? <span className="text-muted-foreground/70"> · {meta.region}</span> : null}
+                  {meta.region ? <span className="text-muted-foreground"> · {meta.region}</span> : null}
                 </p>
               ) : null}
 

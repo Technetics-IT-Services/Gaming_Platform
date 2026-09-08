@@ -10,10 +10,12 @@ import {
   Post,
   Put,
   Query,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { GameStatus } from '@prisma/client';
 
+import { AuditEntity, AuditMutationInterceptor } from '../../security/audit-mutation.interceptor';
 import { RequirePermissions } from '../../../common/decorators/require-permissions.decorator';
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 import { PERMISSIONS } from '../../authorization/rbac.constants';
@@ -36,6 +38,10 @@ import {
 @ApiTags('Admin · Games')
 @ApiBearerAuth()
 @Controller('admin/games')
+// Phase 2D.2 (audit gap #18): every SUCCESSFUL mutating request here is recorded in the audit
+// trail. One interceptor covers all mutation endpoints and cannot drift as routes are added.
+@UseInterceptors(AuditMutationInterceptor)
+@AuditEntity('game')
 export class AdminGamesController {
   constructor(
     private readonly games: GameAdminService,

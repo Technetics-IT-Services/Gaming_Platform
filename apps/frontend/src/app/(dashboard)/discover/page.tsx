@@ -6,10 +6,13 @@ import { Search, Sparkles, Trophy, TrendingUp } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { useRealSession } from '@/hooks/use-real-session';
 import { aiApi, type RecGame, type SearchResult } from '@/lib/ai-api';
 
 export default function DiscoverPage() {
-  const forYou = useQuery({ queryKey: ['ai-for-you'], queryFn: aiApi.forYou });
+  // `/ai/for-you` is user-scoped (recommendations + recently played) — real sessions only.
+  const realSession = useRealSession();
+  const forYou = useQuery({ queryKey: ['ai-for-you'], queryFn: aiApi.forYou, enabled: realSession });
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult | null>(null);
 

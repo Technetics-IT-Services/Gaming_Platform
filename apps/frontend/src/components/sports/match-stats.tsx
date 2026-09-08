@@ -28,7 +28,7 @@ export function MatchStats({
         <p className="font-display text-sm font-bold text-foreground">Live Stats</p>
         <span className="flex items-center gap-3 text-[11px] font-semibold text-muted-foreground">
           <span className="truncate">{home?.short ?? home?.name}</span>
-          <span className="text-muted-foreground/50">vs</span>
+          <span className="text-muted-foreground">vs</span>
           <span className="truncate">{away?.short ?? away?.name}</span>
         </span>
       </div>

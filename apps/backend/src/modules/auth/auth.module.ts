@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AppConfigService } from '../../config/app-config.service';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
@@ -26,6 +27,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     UsersModule,
+    NotificationsModule, // Phase 2D.1 — player security notifications
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [AppConfigService],

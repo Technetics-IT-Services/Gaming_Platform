@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@gaming-platform/ui';
-import { Gamepad2, Home, Spade, TrendingUp, User, Wallet, type LucideIcon } from 'lucide-react';
+import { History, Home, Spade, User, Wallet, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -24,10 +24,21 @@ interface NavItem {
 
 const ITEMS: NavItem[] = [
   { label: 'Home', href: '/dashboard', icon: Home },
-  // Casino stays active across every casino-related route (Phase 1.4.2).
-  { label: 'Casino', href: '/casino', icon: Spade, match: ['/casino', '/crash', '/dice', '/roulette', '/play'] },
-  { label: 'Games', href: '/games', icon: Gamepad2 },
-  { label: 'Sports', href: '/sportsbook', icon: TrendingUp },
+  // "Play" is the real-money lobby (Phase 2C.8); it stays active across the lobby, the demo casino,
+  // and every real-money `-money` game route so the tab reflects "in a game".
+  {
+    label: 'Play',
+    href: '/lobby',
+    icon: Spade,
+    match: [
+      '/lobby', '/casino', '/play',
+      '/dice-money', '/crash-money', '/roulette-money', '/sic-bo-money', '/lottery-money',
+      '/baccarat-money', '/blackjack-money', '/plinko-money', '/mines-money',
+      '/limbo-money', '/coin-flip-money', '/wheel-money',
+      '/dragon-tiger-money', '/andar-bahar-money', '/teen-patti-money',
+    ],
+  },
+  { label: 'History', href: '/game-history', icon: History, match: ['/game-history', '/wallet/history', '/transactions'] },
   { label: 'Wallet', href: '/wallet', icon: Wallet },
   { label: 'Profile', href: '/profile', icon: User },
 ];

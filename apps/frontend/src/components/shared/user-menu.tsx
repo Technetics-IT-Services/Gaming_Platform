@@ -32,7 +32,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-import { authApi } from '@/lib/auth-api';
+import { logoutSession } from '@/lib/auth-session';
 import { clearDemoSession } from '@/lib/demo-session';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDemoWallet } from '@/stores/demo-wallet';
@@ -78,19 +78,15 @@ const GROUPS: { label: string; items: { href: string; label: string; icon: typeo
 
 export function UserMenu() {
   const router = useRouter();
-  const { user, isAuthenticated, clearSession } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
 
   const handleLogout = async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // Ignore — clear the local session regardless.
-    } finally {
-      clearDemoSession(); // don't auto-restore the demo session on next load
-      useDemoWallet.getState().reset(); // new session starts at ₹0
-      clearSession();
-      router.push('/');
-    }
+    // logoutSession() revokes the session server-side, sets the logout latch (no auto-resurrect),
+    // and clears the in-memory session — authoritative even if the network call fails.
+    await logoutSession();
+    clearDemoSession(); // don't auto-restore the demo session on next load
+    useDemoWallet.getState().reset(); // new session starts at ₹0
+    router.push('/');
   };
 
   if (!isAuthenticated || !user) {

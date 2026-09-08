@@ -84,7 +84,7 @@ export default function BetHistoryPage() {
           </div>
         ) : rows.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-2 text-center">
-            <Dices className="h-8 w-8 text-muted-foreground/60" />
+            <Dices className="h-8 w-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">No bets yet — place one in the casino.</p>
           </div>
         ) : (

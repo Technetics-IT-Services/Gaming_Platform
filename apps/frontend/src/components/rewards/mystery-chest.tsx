@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 
 import { GameFx, type FxSignal } from '@/components/games/prototype/game-fx';
 import { sound } from '@/lib/sound';
+import { DemoFundsBadge } from '@/components/wallet/demo-funds-badge';
 import { useDemoWallet } from '@/stores/demo-wallet';
 import { usePlayerProfile } from '@/stores/player-profile';
 
@@ -52,7 +53,9 @@ export function MysteryChest() {
   return (
     <div className="card-premium relative flex flex-col items-center overflow-hidden p-6 text-center">
       <GameFx trigger={fx} />
-      <h3 className="mb-1 font-display text-lg font-bold">Mystery Chest</h3>
+      <h3 className="mb-1 flex items-center gap-2 font-display text-lg font-bold">
+        Mystery Chest <DemoFundsBadge />
+      </h3>
       <p className="mb-4 text-sm text-muted-foreground">Open for a surprise reward</p>
 
       <motion.div

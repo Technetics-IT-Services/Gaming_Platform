@@ -17,10 +17,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { useDashboardMoney } from '@/components/dashboard/use-dashboard-money';
 import { fmtTime } from '@/lib/datetime';
-import { useDemoWallet } from '@/stores/demo-wallet';
+import { useAuthStore } from '@/stores/auth-store';
 import { usePlayerProfile } from '@/stores/player-profile';
 
 /**
@@ -30,13 +31,12 @@ import { usePlayerProfile } from '@/stores/player-profile';
  * wallet / in-memory profile), so there is no hydration mismatch. They reuse the
  * existing stores + design system and never touch wallet/auth logic. Offers live
  * only on /promotions — nothing here is promotional.
+ *
+ * Phase 2C.17 (P0-1): every MONEY figure now comes from `useDashboardMoney()` — server-authoritative
+ * for a real session, clearly-labelled demo state for a demo session. These widgets previously read
+ * `useDemoWallet` unconditionally, so a real ledger-funded player saw demo money on the page login
+ * lands on.
  */
-
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
 
 /* ------------------------------------------------------------------ hero */
 
@@ -46,28 +46,19 @@ function startOfToday(): number {
  * stays focused on identity + today's action.
  */
 export function PlayerHero() {
-  const username = usePlayerProfile((s) => s.username);
+  const demoUsername = usePlayerProfile((s) => s.username);
   const level = usePlayerProfile((s) => s.level);
-  const bets = useDemoWallet((s) => s.bets);
+  const authUser = useAuthStore((s) => s.user);
+  const money = useDashboardMoney();
+  const today = money.today;
+  // A real session is identified by its BACKEND identity, not the demo profile store.
+  const username = money.isReal ? (authUser?.displayName || authUser?.username || '') : demoUsername;
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const today = useMemo(() => {
-    const t0 = startOfToday();
-    let rounds = 0;
-    let wins = 0;
-    let wagered = 0;
-    let net = 0;
-    for (const b of bets) {
-      if (b.ts < t0) continue;
-      rounds += 1;
-      if (b.win) wins += 1;
-      wagered += b.stake;
-      net += b.net;
-    }
-    return { rounds, wins, wagered, net };
-  }, [bets]);
+  /** Render "—" rather than a fabricated 0 while the server figures are still loading. */
+  const stat = (v: string): string => (money.loading ? '—' : v);
 
   return (
     <section className="card-premium relative overflow-hidden p-6 sm:p-8">
@@ -82,9 +73,11 @@ export function PlayerHero() {
               <h1 className="font-display text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
                 Welcome back{mounted && username ? `, ${username}` : ''}
               </h1>
-              <Badge variant="secondary" className="gap-1">
-                <Gem className="h-3 w-3 text-violet" /> Demo Account
-              </Badge>
+              {mounted && money.isDemo ? (
+                <Badge variant="secondary" className="gap-1" data-testid="demo-account-badge">
+                  <Gem className="h-3 w-3 text-violet" /> Demo Account
+                </Badge>
+              ) : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Your gaming hub — jump back in, check today&apos;s action and keep playing.
@@ -94,12 +87,12 @@ export function PlayerHero() {
 
         {/* Today's gaming summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:w-auto">
-          <TodayStat label="Rounds" value={mounted ? String(today.rounds) : '—'} />
-          <TodayStat label="Wins" value={mounted ? `${today.wins}/${today.rounds}` : '—'} tone="text-emerald" />
-          <TodayStat label="Wagered" value={mounted ? `₹${today.wagered.toLocaleString('en-US')}` : '—'} />
+          <TodayStat label="Rounds" value={mounted ? stat(String(today.rounds)) : '—'} />
+          <TodayStat label="Wins" value={mounted ? stat(`${today.wins}/${today.rounds}`) : '—'} tone="text-emerald" />
+          <TodayStat label="Wagered" value={mounted ? stat(`₹${today.wagered.toLocaleString('en-US')}`) : '—'} />
           <TodayStat
             label="Net today"
-            value={mounted ? `${today.net >= 0 ? '+' : '−'}₹${Math.abs(today.net).toLocaleString('en-US')}` : '—'}
+            value={mounted ? stat(`${today.net >= 0 ? '+' : '−'}₹${Math.abs(today.net).toLocaleString('en-US')}`) : '—'}
             tone={mounted && today.net < 0 ? 'text-destructive' : 'text-emerald'}
           />
         </div>
@@ -167,10 +160,10 @@ export function QuickActions() {
 
 /** Recent bets (target step 16) — reads the shared bet ledger. */
 export function RecentBetsCard() {
-  const bets = useDemoWallet((s) => s.bets);
+  const money = useDashboardMoney();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const recent = bets.slice(0, 5);
+  const recent = money.bets;
 
   return (
     <div className="card-premium flex flex-col p-5">
@@ -182,7 +175,11 @@ export function RecentBetsCard() {
           View all
         </Link>
       </div>
-      {!mounted || recent.length === 0 ? (
+      {!mounted || money.loading ? (
+        <Empty text="Loading…" />
+      ) : money.error ? (
+        <Empty text="Could not load your rounds right now." />
+      ) : recent.length === 0 ? (
         <Empty text="No bets yet — play a game to get started." />
       ) : (
         <ul className="space-y-2.5">
@@ -210,10 +207,10 @@ export function RecentBetsCard() {
 
 /** Recent transactions (target step 17) — reads the shared wallet ledger. */
 export function RecentTransactionsCard() {
-  const transactions = useDemoWallet((s) => s.transactions);
+  const money = useDashboardMoney();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const recent = transactions.slice(0, 5);
+  const recent = money.transactions;
 
   return (
     <div className="card-premium flex flex-col p-5">
@@ -225,7 +222,11 @@ export function RecentTransactionsCard() {
           View all
         </Link>
       </div>
-      {!mounted || recent.length === 0 ? (
+      {!mounted || money.loading ? (
+        <Empty text="Loading…" />
+      ) : money.error ? (
+        <Empty text="Could not load your transactions right now." />
+      ) : recent.length === 0 ? (
         <Empty text="No transactions yet." />
       ) : (
         <ul className="space-y-2.5">

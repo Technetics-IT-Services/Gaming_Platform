@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type {
+  AnalyticsConfig,
   AppConfig,
   AuthConfig,
   Configuration,
@@ -38,6 +39,10 @@ export class AppConfigService {
 
   get security(): SecurityConfig {
     return this.config.get('security', { infer: true });
+  }
+
+  get analytics(): AnalyticsConfig {
+    return this.config.get('analytics', { infer: true });
   }
 
   get mail(): MailConfig {

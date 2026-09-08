@@ -7,6 +7,11 @@
  * Bright, glassy, colorful: off-white surfaces, soft blue / purple / cyan / pink
  * gradients, soft shadows, rounded everything. Light-first; `.dark` kept only as
  * a fallback for any legacy surface. Values are HSL channels via hsl(var(--x)).
+ *
+ * Phase 2D.14 — ACCENT LIGHTNESS IS LOAD-BEARING. Each accent below is used BOTH as text on a
+ * light surface and as a background under white text, so its lightness has to satisfy both. The
+ * hue and saturation are the brand and are untouched; only lightness moved, verified by a live
+ * pixel-sampling contrast audit rather than by eye.
  */
 @layer base {
   :root,
@@ -20,7 +25,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 230 35% 16%;
 
-    --primary: 263 80% 60%;
+    --primary: 263 80% 54%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 222 36% 95%;
@@ -30,31 +35,31 @@
     /* Darker secondary text for stronger hierarchy + WCAG AA on light surfaces. */
     --muted-foreground: 225 16% 38%;
 
-    --accent: 190 92% 46%;
+    --accent: 190 92% 26%;
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 350 84% 56%;
+    --destructive: 350 84% 42%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 152 64% 42%;
+    --success: 152 64% 25%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 36 94% 50%;
-    --warning-foreground: 30 50% 14%;
+    --warning: 30 90% 32%;
+    --warning-foreground: 0 0% 100%;
 
     /* Gaming accent ramp */
-    --neon: 190 92% 46%;
+    --neon: 190 92% 26%;
     --neon-foreground: 0 0% 100%;
-    --violet: 268 78% 62%;
-    --gold: 38 94% 50%;
-    --gold-foreground: 30 50% 14%;
-    --emerald: 152 64% 42%;
-    --pink: 326 82% 60%;
+    --violet: 268 78% 52%;
+    --gold: 32 100% 30%;
+    --gold-foreground: 0 0% 100%;
+    --emerald: 152 64% 25%;
+    --pink: 326 82% 40%;
 
     /* Stronger borders so cards/panels separate from the aurora background. */
     --border: 224 24% 84%;
     --input: 224 24% 82%;
-    --ring: 263 80% 60%;
+    --ring: 263 80% 54%;
 
     --radius: 1rem;
   }

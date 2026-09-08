@@ -137,7 +137,7 @@ export function GameCover({
       <Icon className="absolute left-1/2 top-[42%] h-20 w-20 -translate-x-1/2 -translate-y-1/2 text-white/90 drop-shadow-[0_6px_18px_rgba(0,0,0,0.25)] transition-transform duration-500 group-hover:-translate-y-[58%] group-hover:scale-110" />
       {/* title plate */}
       {showTitle ? (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent p-3 pt-8">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/55 to-transparent p-3 pt-8">
           <p className="line-clamp-2 font-display text-sm font-bold leading-tight text-white drop-shadow">
             {name}
           </p>

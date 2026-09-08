@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { Logo } from '@/components/shared/logo';
-import { adminNav, dashboardNav, type NavVariant } from '@/components/shared/navigation';
+import { adminNav, partnerNav, dashboardNav, visibleNav, type NavVariant } from '@/components/shared/navigation';
+import { clientConfig } from '@/lib/config';
 import { useUiStore } from '@/stores/ui-store';
 
 interface SidebarProps {
@@ -16,7 +17,11 @@ interface SidebarProps {
 export function Sidebar({ variant, title }: SidebarProps) {
   const pathname = usePathname();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
-  const items = variant === 'admin' ? adminNav : dashboardNav;
+  // Demo-wallet-backed destinations never appear in a production build.
+  const items = visibleNav(
+    variant === 'admin' ? adminNav : variant === 'partner' ? partnerNav : dashboardNav,
+    clientConfig.demoMode,
+  );
 
   return (
     <aside

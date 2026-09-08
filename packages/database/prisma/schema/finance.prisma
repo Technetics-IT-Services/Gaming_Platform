@@ -1,0 +1,84 @@
+// Finance — operating expenses.
+//
+// SCOPE: this records what the business SPENT. It is accounting data, not player money.
+//
+// DELIBERATELY NOT HERE:
+//   * No ledger posting. An accounting expense and a player wallet movement are different things,
+//     and the requirement defines no money movement for an expense. `WalletEngine`, the ledger and
+//     settlement are untouched.
+//   * No profit. Profit is `revenue - expenses`, and revenue has no agreed definition on this
+//     platform (a client decision). These records are shaped so that aggregation is deterministic,
+//     so profit becomes a small step once that definition exists — but it is not computed here.
+//
+// Categories are a TABLE, not an enum: expense categories (marketing, salaries, infrastructure, …)
+// are business-defined. Hardcoding a list would be inventing the client's chart of accounts.
+
+enum ExpenseStatus {
+  DRAFT // recorded, not yet confirmed
+  CONFIRMED // counts toward aggregation
+  VOID // reversed; retained for audit, excluded from aggregation
+
+  @@map("expense_status")
+}
+
+/// An operator-defined expense category.
+model ExpenseCategory {
+  id     String  @id @default(uuid(7)) @db.Uuid
+  /// Stable machine key, e.g. "MARKETING".
+  code   String  @unique
+  name   String
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  expenses Expense[]
+
+  @@index([isActive])
+  @@map("expense_categories")
+}
+
+/// A single recorded business expense.
+///
+/// `amount` is `Decimal`, never a float, and is always paired with a `currencyId` — expenses are
+/// never combined across currencies, for the same reason analytics never combines them: there is no
+/// FX source.
+model Expense {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  categoryId  String        @map("category_id") @db.Uuid
+  description String
+  amount      Decimal       @db.Decimal(20, 8)
+  currencyId  String        @map("currency_id") @db.Uuid
+  /// The business date the expense belongs to — NOT the row's creation time. Aggregation windows
+  /// use this, so a late-entered expense still lands in the correct period.
+  incurredOn  DateTime      @map("incurred_on") @db.Date
+  status      ExpenseStatus @default(DRAFT)
+
+  /// Operator's own external reference (invoice number, PO). Unique when present, so the same
+  /// invoice cannot be recorded twice.
+  reference String? @unique
+
+  notes String?
+
+  /// Attribution. Every expense is traceable to the operator who recorded it.
+  createdByUserId String  @map("created_by_user_id") @db.Uuid
+  voidedByUserId  String? @map("voided_by_user_id") @db.Uuid
+  voidedAt        DateTime? @map("voided_at")
+  voidReason      String?   @map("void_reason")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  category  ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  currency  Currency        @relation("ExpenseCurrency", fields: [currencyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Aggregation is by (status, currency, date) — indexed for the period rollups a future profit
+  // calculation will need.
+  @@index([status, currencyId, incurredOn])
+  @@index([categoryId, incurredOn])
+  @@index([incurredOn])
+  @@map("expenses")
+}

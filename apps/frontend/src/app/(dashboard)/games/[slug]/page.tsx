@@ -36,6 +36,7 @@ export default function GameDetailPage() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isDemoSession = useAuthStore((s) => s.isDemoSession);
   const [myRating, setMyRating] = useState(0);
 
   // retry:false so a missing backend (demo mode) falls through to the registry
@@ -59,7 +60,8 @@ export default function GameDetailPage() {
 
   /** Instant play — routes to the runtime (demo-safe, no backend required). */
   const play = () => {
-    if (isAuthenticated) void gamesApi.recordPlay(g.id).catch(() => undefined);
+    // recordPlay is user-scoped: only a real server session may write play history.
+    if (isAuthenticated && !isDemoSession) void gamesApi.recordPlay(g.id).catch(() => undefined);
     router.push(`/play/${slug}`);
   };
 

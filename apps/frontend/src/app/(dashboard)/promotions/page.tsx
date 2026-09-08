@@ -256,7 +256,7 @@ function OfferCard({ offer, onClaim }: { offer: Offer; onClaim: () => void }) {
   const dim = status !== 'active';
 
   return (
-    <div className={cn('card-premium sheen group relative overflow-hidden p-6', dim && 'opacity-75')}>
+    <div className={cn('card-premium sheen group relative overflow-hidden p-6', dim && 'opacity-90')}>
       <div
         className={cn(
           'absolute -right-8 -top-8 h-28 w-28 rounded-full bg-gradient-to-br opacity-20 blur-2xl transition-opacity group-hover:opacity-40',
@@ -301,20 +301,20 @@ function OfferCard({ offer, onClaim }: { offer: Offer; onClaim: () => void }) {
 function StatusBadge({ status, fallback }: { status: OfferStatus; fallback: string }) {
   if (status === 'claimed') {
     return (
-      <span className="rounded-full border border-emerald/30 bg-emerald/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald">
+      <span className="rounded-full border border-emerald/30 bg-card px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald">
         Claimed
       </span>
     );
   }
   if (status === 'expired') {
     return (
-      <span className="rounded-full border border-black/10 bg-black/[0.04] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="rounded-full border border-black/10 bg-card px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         Expired
       </span>
     );
   }
   return (
-    <span className="rounded-full border border-black/10 bg-card/60 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <span className="rounded-full border border-black/10 bg-card px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
       {fallback}
     </span>
   );

@@ -12,6 +12,7 @@ import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RbacService } from '../authorization/rbac.service';
 import { ROLE_SLUGS } from '../authorization/rbac.constants';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import { AuditService } from '../security/audit.service';
 import { SecurityEventService } from '../security/security-event.service';
 import { type AuthUserView, UsersService } from '../users/users.service';
@@ -61,6 +62,8 @@ export class AuthService {
     private readonly rbac: RbacService,
     private readonly security: SecurityEventService,
     private readonly audit: AuditService,
+    // Phase 2D.1: player-visible security notifications, raised after the change has committed.
+    private readonly notify: NotificationEventsService,
   ) {}
 
   // ---- Registration --------------------------------------------------------
@@ -186,7 +189,33 @@ export class AuthService {
     const response = await this.issueFor(userId, meta, rememberMe, deviceId);
     await this.users.updateLastLogin(userId, meta.ipAddress);
     await this.accountSecurity.recordLogin(userId, true, meta);
-    await this.security.record({ userId, type: SecurityEventType.LOGIN_SUCCESS, meta });
+
+    // Phase 2D.2 (audit gap #17): a privileged sign-in was previously indistinguishable from a
+    // player sign-in — both produced a bare LOGIN_SUCCESS. The client requirement lists "admin login"
+    // as its own auditable action, so an elevated login is additionally written to the generic audit
+    // trail with the roles that made it privileged, and its security event says so.
+    const roles = response.user.roles ?? [];
+    const elevated = roles.some((r) => r === 'admin' || r === 'super_admin' || r === 'moderator');
+
+    await this.security.record({
+      userId,
+      type: SecurityEventType.LOGIN_SUCCESS,
+      severity: elevated ? SecuritySeverity.MEDIUM : SecuritySeverity.INFO,
+      description: elevated ? `Privileged sign-in (${roles.join(', ')})` : undefined,
+      meta,
+    });
+
+    if (elevated) {
+      await this.audit.record({
+        userId,
+        action: AuditAction.LOGIN,
+        entityType: 'admin_session',
+        entityId: userId,
+        // Roles only — never a token, secret or credential.
+        changes: { roles, twoFactor: response.user.twoFactorEnabled === true },
+        meta,
+      });
+    }
     return response;
   }
 
@@ -212,8 +241,12 @@ export class AuthService {
     return { success: true };
   }
 
-  async logoutAll(userId: string, currentSessionId?: string): Promise<{ revoked: number }> {
-    return this.sessions.revokeAll(userId, currentSessionId);
+  async logoutAll(
+    userId: string,
+    currentSessionId?: string,
+    meta?: RequestMeta | null,
+  ): Promise<{ revoked: number }> {
+    return this.sessions.revokeAll(userId, currentSessionId, meta);
   }
 
   // ---- Password change -----------------------------------------------------
@@ -237,8 +270,9 @@ export class AuthService {
     const passwordHash = await this.passwords.hash(newPassword);
     await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
 
-    // Keep the current session, revoke all others.
-    await this.sessions.revokeAll(userId, currentSessionId);
+    // Keep the current session, revoke all others. `meta` flows through so the bulk revocation is
+    // attributable in the audit trail (Phase 2D.2, gap #16).
+    await this.sessions.revokeAll(userId, currentSessionId, meta);
     await this.security.record({
       userId,
       type: SecurityEventType.PASSWORD_CHANGE,
@@ -246,6 +280,7 @@ export class AuthService {
       description: 'Password changed; other sessions revoked',
       meta,
     });
+    await this.notify.passwordChanged({ userId, at: new Date() });
     return { success: true };
   }
 

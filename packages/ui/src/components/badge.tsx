@@ -15,13 +15,13 @@ export const badgeVariants = cva(
         warning: 'border-transparent bg-warning text-warning-foreground',
         outline: 'text-foreground',
         // --- Gaming badges (additive) -------------------------------------
-        neon: 'border-transparent bg-accent/15 text-accent shadow-glow-neon ring-1 ring-inset ring-accent/40',
+        neon: 'border-transparent bg-card text-accent shadow-glow-neon ring-1 ring-inset ring-accent/40',
         gold: 'border-transparent bg-gradient-gold text-gold-foreground shadow-glow-gold',
-        hot: 'border-transparent bg-gradient-to-r from-destructive to-warning text-white shadow-glow-pink',
-        live: 'border-transparent bg-destructive/15 text-destructive ring-1 ring-inset ring-destructive/50',
-        new: 'border-transparent bg-emerald/15 text-emerald ring-1 ring-inset ring-emerald/45',
+        hot: 'border-transparent bg-gradient-to-r from-destructive to-gold text-white shadow-glow-pink',
+        live: 'border-transparent bg-card text-destructive ring-1 ring-inset ring-destructive/50',
+        new: 'border-transparent bg-card text-emerald ring-1 ring-inset ring-emerald/45',
         jackpot:
-          'border-transparent bg-gradient-to-r from-gold via-warning to-pink text-white shadow-glow-gold',
+          'border-transparent bg-gradient-to-r from-gold via-destructive to-pink text-white shadow-glow-gold',
         featured:
           'border-transparent bg-gradient-to-r from-primary to-violet text-white shadow-glow-sm',
       },

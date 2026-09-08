@@ -1,12 +1,15 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { TwoFactorMethod } from '@prisma/client';
+import { AuditAction, SecurityEventType, SecuritySeverity, TwoFactorMethod } from '@prisma/client';
 import type { TwoFactorSetup, TwoFactorStatus } from '@gaming-platform/types';
 import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 
 import { AppConfigService } from '../../../config/app-config.service';
 import { generateRecoveryCodes, sha256 } from '../../../common/security/crypto.util';
+import type { RequestMeta } from '../../../common/security/request-meta';
 import { PrismaService } from '../../database/prisma.service';
+import { AuditService } from '../../security/audit.service';
+import { SecurityEventService } from '../../security/security-event.service';
 
 const RECOVERY_CODE_COUNT = 10;
 
@@ -19,7 +22,44 @@ export class TwoFactorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
+    // Phase 2D.2: enabling/disabling a second factor is a security-critical change. The
+    // `MFA_ENABLED`/`MFA_DISABLED` event types already existed but had ZERO call sites, so these
+    // changes were previously invisible in both audit stores. Recorded in BOTH, after the change
+    // commits, and NEVER carrying the TOTP secret or any recovery code.
+    private readonly security: SecurityEventService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Record a 2FA state change in both audit stores.
+   *
+   * Deliberately carries no secret material: `changes` holds only the method and the resulting state.
+   * Non-blocking by the existing `AuditService` contract, and called only after the transaction has
+   * committed, so it can never affect the security outcome.
+   */
+  private async recordMfaChange(
+    userId: string,
+    enabled: boolean,
+    meta?: RequestMeta | null,
+  ): Promise<void> {
+    await this.security.record({
+      userId,
+      type: enabled ? SecurityEventType.MFA_ENABLED : SecurityEventType.MFA_DISABLED,
+      severity: SecuritySeverity.HIGH,
+      description: enabled
+        ? 'Two-factor authentication enabled (TOTP)'
+        : 'Two-factor authentication disabled',
+      meta: meta ?? null,
+    });
+    await this.audit.record({
+      userId,
+      action: AuditAction.UPDATE,
+      entityType: 'two_factor',
+      entityId: userId,
+      changes: { method: 'TOTP', enabled },
+      meta: meta ?? null,
+    });
+  }
 
   /** Provision a new (not-yet-enabled) TOTP secret and return the QR payload. */
   async generateSetup(userId: string, accountLabel: string): Promise<TwoFactorSetup> {
@@ -45,7 +85,7 @@ export class TwoFactorService {
   }
 
   /** Confirm the TOTP code, enable 2FA, and issue one-time recovery codes. */
-  async enable(userId: string, code: string): Promise<{ recoveryCodes: string[] }> {
+  async enable(userId: string, code: string, meta?: RequestMeta | null): Promise<{ recoveryCodes: string[] }> {
     const totp = await this.prisma.twoFactorAuth.findUnique({
       where: { userId_method: { userId, method: TwoFactorMethod.TOTP } },
     });
@@ -81,11 +121,12 @@ export class TwoFactorService {
       this.prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: true } }),
     ]);
 
+    await this.recordMfaChange(userId, true, meta);
     return { recoveryCodes };
   }
 
   /** Disable all 2FA methods after verifying a current code. */
-  async disable(userId: string, code: string): Promise<{ success: true }> {
+  async disable(userId: string, code: string, meta?: RequestMeta | null): Promise<{ success: true }> {
     const valid = await this.verifyCode(userId, code);
     if (!valid) {
       throw new BadRequestException('Invalid verification code');
@@ -94,6 +135,7 @@ export class TwoFactorService {
       this.prisma.twoFactorAuth.deleteMany({ where: { userId } }),
       this.prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: false } }),
     ]);
+    await this.recordMfaChange(userId, false, meta);
     return { success: true };
   }
 

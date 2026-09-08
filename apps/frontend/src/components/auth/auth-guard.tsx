@@ -7,12 +7,13 @@ import { useEffect } from 'react';
 import { useAuthStore } from '@/stores/auth-store';
 
 /**
- * Client-side route guard for authenticated sections (Phase 1.1).
+ * Client-side route guard for authenticated sections (Phase 1.1, hardened in Phase 2C.5).
  *
- * Reuses the existing auth store (no duplicate auth logic). While the initial
- * silent-refresh runs it shows a spinner; once resolved, guests are redirected
- * to /login and authenticated users see the page. Public routes (/, /login,
- * /signup, /register, /help, /forgot-password, …) are simply not wrapped.
+ * Reuses the single authoritative auth store. It NEVER redirects while the session bootstrap is
+ * still running (`initialized === false`, i.e. status BOOTSTRAPPING/REFRESHING) — it renders a
+ * lightweight, overflow-safe mobile shell instead. Only once bootstrap resolves does it act:
+ * UNAUTHENTICATED → /login, AUTHENTICATED → the page. This prevents the login-flash / premature
+ * redirect that a rotating, reuse-detecting refresh could otherwise cause.
  */
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -23,10 +24,19 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     if (initialized && !isAuthenticated) router.replace('/login');
   }, [initialized, isAuthenticated, router]);
 
+  // BOOTSTRAPPING / REFRESHING — wait. A minimal, centered shell: no protected content, no login
+  // flash, no layout shift, and no horizontal overflow at mobile widths.
   if (!initialized) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner size={32} />
+      <div
+        className="flex min-h-screen w-full flex-col items-center justify-center gap-3 overflow-x-hidden px-6"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        data-testid="auth-loading"
+      >
+        <Spinner size={28} />
+        <span className="text-sm text-muted-foreground">Restoring your session…</span>
       </div>
     );
   }

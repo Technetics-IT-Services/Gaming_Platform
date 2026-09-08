@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { cpus } from 'node:os';
 
 import { MetricsService } from './metrics.service';
@@ -27,6 +27,8 @@ const SAMPLE_INTERVAL_MS = 5000;
  */
 @Injectable()
 export class MonitoringService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(MonitoringService.name);
+  private sampleFailures = 0;
   private sampleTimer: ReturnType<typeof setInterval> | null = null;
   private lagTimer: ReturnType<typeof setInterval> | null = null;
   private lastCpu = process.cpuUsage();
@@ -49,7 +51,23 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       this.eventLoopLagMs = Math.max(0, now - expected);
       expected = now + 1000;
     }, 1000);
-    this.sampleTimer = setInterval(() => void this.sample(), SAMPLE_INTERVAL_MS);
+    // Phase 2D.11: the rejection MUST be caught here.
+    //
+    // This previously read `void this.sample()`, which discards the promise — so a transient
+    // database or Redis error inside a sampling cycle became an unhandled rejection, and under
+    // Node 18+ an unhandled rejection terminates the process. A monitoring sampler taking the
+    // whole API down during a momentary database blip is precisely backwards: observability must
+    // never be able to kill the thing it observes.
+    //
+    // Observed once during a full serial test run (`AlertService.rules` → Prisma, mid-teardown).
+    this.sampleTimer = setInterval(() => {
+      this.sample().catch((error: unknown) => {
+        this.sampleFailures += 1;
+        this.logger.warn(
+          `monitoring sample failed (${this.sampleFailures} since boot): ${String(error)}`,
+        );
+      });
+    }, SAMPLE_INTERVAL_MS);
   }
 
   onModuleDestroy(): void {

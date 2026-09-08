@@ -27,9 +27,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Logo } from '@/components/shared/logo';
-import { authApi } from '@/lib/auth-api';
+import { logoutSession } from '@/lib/auth-session';
 import { clearDemoSession } from '@/lib/demo-session';
-import { useAuthStore } from '@/stores/auth-store';
 import { useDemoWallet } from '@/stores/demo-wallet';
 
 /**
@@ -88,21 +87,15 @@ const GROUPS: { title: string; items: Item[] }[] = [
 export function MobileDrawer() {
   const pathname = usePathname();
   const router = useRouter();
-  const clearSession = useAuthStore((s) => s.clearSession);
   const [open, setOpen] = useState(false);
 
   const logout = async () => {
     setOpen(false);
-    try {
-      await authApi.logout();
-    } catch {
-      // Ignore — clear the local session regardless (same flow as the profile menu).
-    } finally {
-      clearDemoSession();
-      useDemoWallet.getState().reset();
-      clearSession();
-      router.push('/');
-    }
+    // Authoritative logout: server revokes the session, latch prevents auto-resurrect, state cleared.
+    await logoutSession();
+    clearDemoSession();
+    useDemoWallet.getState().reset();
+    router.push('/');
   };
 
   return (
@@ -127,7 +120,7 @@ export function MobileDrawer() {
         <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-4" aria-label="All sections">
           {GROUPS.map((group) => (
             <div key={group.title} className="mb-5 last:mb-0">
-              <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground/80">
+              <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                 {group.title}
               </p>
               <ul className="space-y-1">

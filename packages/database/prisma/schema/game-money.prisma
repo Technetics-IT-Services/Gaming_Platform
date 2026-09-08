@@ -1,0 +1,97 @@
+// =============================================================================
+// Real-Money Game Bridge (Phase 2B) — additive game-round orchestration record.
+//
+// This is NOT a financial table: money lives in wallet_transactions + ledger(_entries)
+// owned by the frozen Wallet Engine. `game_rounds` only orchestrates a single-shot
+// authenticated game round (idempotency, provably-fair metadata, lifecycle) and
+// correlates to the wallet via `reservation_id` / `bet_transaction_id`. FKs are plain
+// scalar columns (no @relation) to keep the change isolated to this file.
+// =============================================================================
+
+enum GameRoundStatus {
+  CREATED
+  RESERVED
+  RESOLVED
+  SETTLED
+  FAILED
+  PENDING_SETTLEMENT
+  RECOVERING
+  RECOVERED
+  RECOVERY_FAILED
+}
+
+model GameRound {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  userId           String          @map("user_id") @db.Uuid
+  gameKey          String          @map("game_key")
+  variant          String
+  betType          String          @map("bet_type")
+  currencyId       String          @map("currency_id") @db.Uuid
+  stake            Decimal         @db.Decimal(38, 18)
+  payout           Decimal         @default(0) @db.Decimal(38, 18)
+  status           GameRoundStatus @default(CREATED)
+  idempotencyKey   String          @map("idempotency_key")
+  reservationId    String?         @map("reservation_id") @db.Uuid
+  betTransactionId String?         @map("bet_transaction_id") @db.Uuid
+  // Number-Lottery tickets associate to a shared LotteryDraw (Phase 2C.3). Null for
+  // instant games (dice/sic-bo/crash/roulette). Plain scalar FK — no @relation — to keep
+  // the change isolated to this file.
+  drawId           String?         @map("draw_id") @db.Uuid
+  // Optimistic-lock / action counter for INTERACTIVE rounds (Blackjack, Phase 2C.4). Each
+  // committed player action bumps it; a guarded `updateMany(where actionSeq=S)` serializes
+  // concurrent actions to exactly one. 0 for single-shot games. Also the replay depth used to
+  // deterministically reconstruct the hand from the seed (restart-safe; no in-memory state).
+  actionSeq        Int             @default(0) @map("action_seq")
+  result           Json?           @db.JsonB
+  fairness         Json?           @db.JsonB
+  error            String?
+  recoveryAttempts Int             @default(0) @map("recovery_attempts")
+  lastRecoveryAt   DateTime?       @map("last_recovery_at")
+  nextRecoveryAt   DateTime?       @map("next_recovery_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  settledAt        DateTime?       @map("settled_at")
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([status, nextRecoveryAt])
+  @@index([drawId])
+  @@map("game_rounds")
+}
+
+// Number-Lottery scheduled draw (Phase 2C.3). A single authoritative draw against which
+// every ticket (GameRound with a matching draw_id) is evaluated — the shared source of
+// truth for winning numbers. Provably-fair seed is committed at creation; winning numbers
+// are derived once (execute-once via a guarded status transition) and are durable/restart-
+// safe. This is NOT a financial table — money stays in the wallet/ledger.
+enum LotteryDrawStatus {
+  OPEN // accepting ticket sales
+  CLOSED // sales closed, awaiting execution
+  DRAWN // winning numbers derived, tickets settling
+  SETTLED // all tickets settled
+}
+
+model LotteryDraw {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  drawNumber     Int               @unique @default(autoincrement()) @map("draw_number")
+  status         LotteryDrawStatus @default(OPEN)
+  poolSize       Int               @map("pool_size")
+  pick           Int
+  ticketPrice    Decimal           @map("ticket_price") @db.Decimal(38, 18)
+  currencyId     String            @map("currency_id") @db.Uuid
+  serverSeed     String            @map("server_seed")
+  serverSeedHash String            @map("server_seed_hash")
+  clientSeed     String            @map("client_seed")
+  nonce          Int               @default(0)
+  winningNumbers Int[]             @map("winning_numbers")
+  opensAt        DateTime          @default(now()) @map("opens_at")
+  drawAt         DateTime          @map("draw_at")
+  executedAt     DateTime?         @map("executed_at")
+  settledAt      DateTime?         @map("settled_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@index([status, drawAt])
+  @@map("lottery_draws")
+}

@@ -13,40 +13,27 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { useDashboardMoney } from '@/components/dashboard/use-dashboard-money';
 import { AnimatedNumber } from '@/components/marketing/animated-number';
 import { fmtTime } from '@/lib/datetime';
-import { useDemoWallet } from '@/stores/demo-wallet';
 
 /**
- * Dashboard Wallet Summary widget (Phase 1.3). Reuses card-premium + the shared
- * type scale. Client-only + mounted-gated (reads the persisted wallet + "today"),
- * so it never causes a hydration mismatch.
+ * Dashboard Wallet Summary widget (Phase 1.3; money source corrected in Phase 2C.17 P0-1).
+ *
+ * Money comes from `useDashboardMoney()`: server-authoritative for a REAL session (balance is the
+ * backend `available`, never computed here) and clearly-labelled demo state for a demo session. It
+ * previously read `useDemoWallet` unconditionally, so a real funded player saw demo balances here.
+ * Still client-only + mounted-gated, so there is no hydration mismatch.
  */
 export function WalletSummary() {
-  const balance = useDemoWallet((s) => s.balance);
-  const vault = useDemoWallet((s) => s.vault);
-  const transactions = useDemoWallet((s) => s.transactions);
+  const money = useDashboardMoney();
+  const { today } = money;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const today = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const t0 = start.getTime();
-    const sum = { deposit: 0, withdraw: 0, bet: 0, win: 0 };
-    for (const t of transactions) {
-      if (t.ts < t0) continue;
-      if (t.type === 'deposit') sum.deposit += t.amount;
-      else if (t.type === 'withdraw') sum.withdraw += Math.abs(t.amount);
-      else if (t.type === 'bet') sum.bet += Math.abs(t.amount);
-      else if (t.type === 'win') sum.win += t.amount;
-    }
-    return sum;
-  }, [transactions]);
-
-  const recent = transactions.slice(0, 5);
+  const recent = money.transactions;
 
   if (!mounted) return null;
 
@@ -55,6 +42,14 @@ export function WalletSummary() {
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 font-display text-xl font-bold tracking-tight md:text-2xl">
           <Wallet className="h-5 w-5 text-primary" /> Wallet summary
+          {money.isDemo ? (
+            <span
+              data-testid="wallet-summary-demo-badge"
+              className="rounded-full bg-violet/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet"
+            >
+              Demo
+            </span>
+          ) : null}
         </h2>
         <Link
           href="/deposit"
@@ -64,15 +59,25 @@ export function WalletSummary() {
         </Link>
       </div>
 
+      {money.error ? (
+        <div
+          data-testid="wallet-summary-error"
+          className="card-premium p-5 text-sm text-destructive"
+          role="alert"
+        >
+          Could not load your wallet right now. Please retry — no figures are shown rather than
+          showing a value we cannot verify.
+        </div>
+      ) : (
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
         {/* Balances + today */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Stat icon={Coins} tone="text-gold" label="Wallet" value={balance} big />
-          <Stat icon={Lock} tone="text-violet" label="Vault" value={vault} big />
-          <Stat icon={ArrowDownToLine} tone="text-emerald" label="Today deposits" value={today.deposit} />
-          <Stat icon={ArrowUpFromLine} tone="text-destructive" label="Today withdrawals" value={today.withdraw} />
-          <Stat icon={Spade} tone="text-muted-foreground" label="Today bets" value={today.bet} />
-          <Stat icon={TrendingUp} tone="text-emerald" label="Today wins" value={today.win} />
+          <Stat icon={Coins} tone="text-gold" label="Wallet" value={money.loading ? null : money.balance} big />
+          <Stat icon={Lock} tone="text-violet" label={money.isReal ? 'Held' : 'Vault'} value={money.loading ? null : money.vault} big />
+          <Stat icon={ArrowDownToLine} tone="text-emerald" label="Today deposits" value={money.loading ? null : today.deposit} />
+          <Stat icon={ArrowUpFromLine} tone="text-destructive" label="Today withdrawals" value={money.loading ? null : today.withdraw} />
+          <Stat icon={Spade} tone="text-muted-foreground" label="Today bets" value={money.loading ? null : today.bet} />
+          <Stat icon={TrendingUp} tone="text-emerald" label="Today wins" value={money.loading ? null : today.win} />
         </div>
 
         {/* Recent transactions */}
@@ -85,7 +90,11 @@ export function WalletSummary() {
               View all
             </Link>
           </div>
-          {recent.length === 0 ? (
+          {money.loading ? (
+            <div className="flex flex-1 items-center justify-center py-6 text-center text-sm text-muted-foreground">
+              Loading…
+            </div>
+          ) : recent.length === 0 ? (
             <div className="flex flex-1 items-center justify-center py-6 text-center text-sm text-muted-foreground">
               No transactions yet.
             </div>
@@ -113,6 +122,14 @@ export function WalletSummary() {
           )}
         </div>
       </div>
+      )}
+
+      {money.todayTruncated ? (
+        <p className="text-[11px] text-muted-foreground">
+          Today&apos;s totals cover the most recent {100} entries — open{' '}
+          <Link href="/wallet/history" className="underline">wallet history</Link> for the full record.
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -127,7 +144,8 @@ function Stat({
   icon: LucideIcon;
   tone: string;
   label: string;
-  value: number;
+  /** `null` = not known yet (loading / unavailable). Renders "—", never a fabricated 0. */
+  value: number | null;
   big?: boolean;
 }) {
   return (
@@ -141,7 +159,7 @@ function Stat({
           big ? 'text-2xl' : 'text-lg',
         )}
       >
-        ₹<AnimatedNumber value={value} />
+        {value === null ? '—' : <>₹<AnimatedNumber value={value} /></>}
       </span>
     </div>
   );

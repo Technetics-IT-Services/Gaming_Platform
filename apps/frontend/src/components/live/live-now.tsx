@@ -69,7 +69,7 @@ function LiveGamesContainer() {
           {/* animated banner — taller on mobile for a bigger thumbnail */}
           <div className={cn('relative bg-gradient-to-br max-md:h-32 md:h-24', g.gradient)}>
                     <div className="bg-grid absolute inset-0 opacity-30" />
-                    <div className="absolute right-3 top-3 rounded-full bg-white/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur">
+                    <div className="absolute right-3 top-3 rounded-full bg-black/65 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur">
                       ● Live
                     </div>
                     <Icon className="absolute -bottom-3 left-4 h-16 w-16 text-white/90 drop-shadow-lg transition-transform duration-300 group-hover:scale-110" />

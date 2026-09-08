@@ -51,6 +51,9 @@ export const viewport: Viewport = {
   themeColor: '#f4f6fc',
   width: 'device-width',
   initialScale: 1,
+  // Extend under the notch/home-bar so `env(safe-area-inset-*)` (used by the fixed bottom nav and
+  // sticky controls) resolves to real insets on mobile instead of 0 (Phase 2C.5 mobile shell).
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

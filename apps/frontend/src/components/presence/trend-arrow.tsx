@@ -33,7 +33,7 @@ export function TrendArrow({ delta, className }: { delta: number; className?: st
   }
   return (
     <span
-      className={cn('flex w-9 items-center gap-0.5 text-[11px] font-semibold text-muted-foreground/60', className)}
+      className={cn('flex w-9 items-center gap-0.5 text-[11px] font-semibold text-muted-foreground', className)}
       aria-label="no change"
     >
       <Minus className="h-3.5 w-3.5" />

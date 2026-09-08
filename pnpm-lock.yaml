@@ -619,6 +619,9 @@ importers:
         specifier: ^6.2.1
         version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
+      '@gaming-platform/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@gaming-platform/config':
         specifier: workspace:*
         version: link:../config
@@ -643,6 +646,9 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.0)(terser@5.48.0)
 
   packages/game-sdk:
     devDependencies:

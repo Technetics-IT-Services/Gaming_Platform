@@ -17,6 +17,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 
+import { RealAccountRequired } from '@/components/auth/real-money-guard';
+import { useRealSession } from '@/hooks/use-real-session';
 import { EconomyDashboard } from '@/components/economy/economy-dashboard';
 import { RarityBadge } from '@/components/economy/rarity-badge';
 import { WalletInsight } from '@/components/economy/wallet-insight';
@@ -46,13 +48,17 @@ export default function WalletPage() {
   const [page, setPage] = useState(1);
   const [typeFilter, setTypeFilter] = useState('');
 
-  const balances = useQuery({ queryKey: ['wallet-balances'], queryFn: walletApi.balances });
+  // User-scoped + real-money data: requires a REAL server session (never a demo one).
+  const realSession = useRealSession();
+
+  const balances = useQuery({ queryKey: ['wallet-balances'], queryFn: walletApi.balances, enabled: realSession });
   const txns = useQuery({
     queryKey: ['wallet-txns', page, typeFilter],
     queryFn: () => walletApi.transactions({ page, limit: 10, type: typeFilter || undefined }),
+    enabled: realSession,
   });
-  const bonus = useQuery({ queryKey: ['wallet-bonus'], queryFn: walletApi.bonus });
-  const reward = useQuery({ queryKey: ['wallet-reward'], queryFn: walletApi.reward });
+  const bonus = useQuery({ queryKey: ['wallet-bonus'], queryFn: walletApi.bonus, enabled: realSession });
+  const reward = useQuery({ queryKey: ['wallet-reward'], queryFn: walletApi.reward, enabled: realSession });
 
   // Deterministic, backend-free economy insights (always available in demo).
   const insights = useMemo(() => walletInsights(), []);
@@ -80,6 +86,10 @@ export default function WalletPage() {
   const primaryCurrency = balances.data?.wallets[0]?.currencyId ?? '';
   const main = balances.data?.wallets.find((w) => w.type === 'MAIN');
   const otherWallets = balances.data?.wallets.filter((w) => w.type !== 'MAIN') ?? [];
+
+  // A demo session has no server wallet/ledger — show the real-account notice instead of an
+  // endless empty state (the api-client blocks these endpoints for demo sessions regardless).
+  if (!realSession) return <RealAccountRequired />;
 
   return (
     <div className="space-y-6">

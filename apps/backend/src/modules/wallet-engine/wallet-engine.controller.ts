@@ -8,7 +8,10 @@ import { WalletBalanceService } from './services/wallet-balance.service';
 import { WalletTransactionService } from './services/wallet-transaction.service';
 import { BonusWalletService } from './services/bonus-wallet.service';
 import { RewardWalletService } from './services/reward-wallet.service';
-import { GrantBonusDto, RewardPointsDto, TransactionQueryDto, TransferDto } from './dto/wallet.dto';
+// `GrantBonusDto` is deliberately no longer imported — see the removal note at the end of the class.
+// The class itself is left in `wallet.dto.ts` untouched: deleting it would be an unrelated edit to a
+// frozen file, and an unused exported type carries no runtime surface.
+import { RewardPointsDto, TransactionQueryDto, TransferDto } from './dto/wallet.dto';
 
 @ApiTags('Wallet Engine')
 @ApiBearerAuth()
@@ -88,16 +91,25 @@ export class WalletEngineController {
     return this.rewards.redeem(userId, dto.points);
   }
 
-  // Used to provision a starter wallet & demo funds in non-production play.
-  @Post('grant-bonus')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Claim a promotional bonus (if eligible)' })
-  grantBonus(@CurrentUser('id') userId: string, @Body() dto: GrantBonusDto) {
-    return this.bonus.grant({
-      userId,
-      currencyId: dto.currencyId,
-      amount: dto.amount,
-      wageringRequirement: dto.wageringRequirement,
-    });
-  }
+  /*
+   * REMOVED in Phase 2D.11 — `POST /wallet-engine/grant-bonus` (CRITICAL authorization defect).
+   *
+   * The route granted a bonus to `@CurrentUser('id')` — the caller — with a client-supplied amount
+   * and a client-supplied wagering requirement, and carried NO permission guard. Any authenticated
+   * player could therefore grant themselves an arbitrary bonus and convert it into withdrawable
+   * main-wallet funds. Reproduced live on 2026-09-07: a `user`-role account created ₹1,000,000 in
+   * two HTTP calls.
+   *
+   * It could not be *guarded* in place without also changing its shape: the route has no `userId`,
+   * so an authorized version would have to grant TO a named player — which is exactly what
+   * `POST /admin/bonuses` already does (requires `wallets:adjust`, idempotent on an operator
+   * reference, audited to the acting operator). Guarding here would have created a second source of
+   * truth for the same operation, so the route was removed instead. No caller existed anywhere in
+   * this repository.
+   *
+   * WALLET ACCOUNTING IS UNCHANGED. `BonusWalletService`, `WalletEngineService`, the ledger and
+   * settlement were not touched: this deletes an entry point, not a calculation.
+   *
+   * See docs/FROZEN_CHANGE_PROPOSAL_2D10_GRANT_BONUS.md and docs/PHASE_2D11_SECURITY_FIX.md.
+   */
 }

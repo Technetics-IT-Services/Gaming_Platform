@@ -507,7 +507,7 @@ export function PlayerCard({ className }: { className?: string }) {
             <Trophy className="mr-1 h-3 w-3" /> Tier {p.seasonTier}
           </Badge>
         </div>
-        <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-black/25 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur">
+        <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-black/65 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur">
           <span className={cn('h-2 w-2 rounded-full', statusDot)} />
           {p.status}
         </div>

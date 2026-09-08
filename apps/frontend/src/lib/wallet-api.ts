@@ -54,6 +54,40 @@ export interface RewardWallet {
   status: string;
 }
 
+/** A server-authoritative wallet-history row. balanceBefore/After are STORED values, never derived. */
+export interface WalletHistoryItem {
+  id: string;
+  type: string;
+  status: string;
+  amount: string;
+  fee: string;
+  balanceBefore: string;
+  balanceAfter: string;
+  currency: string;
+  reference: string;
+  description: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+export interface WalletHistoryPage {
+  items: WalletHistoryItem[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface WalletHistoryFilters {
+  page?: number;
+  limit?: number;
+  type?: string;
+  status?: string;
+  currency?: string;
+  from?: string;
+  to?: string;
+}
+
 export const walletApi = {
   balances: () => unwrap<BalanceSummary>(apiClient.get('/wallet-engine/balances')),
   transactions: (params: { page?: number; limit?: number; type?: string; status?: string } = {}) => {
@@ -61,6 +95,13 @@ export const walletApi = {
     Object.entries(params).forEach(([k, v]) => v !== undefined && v !== '' && q.set(k, String(v)));
     const qs = q.toString();
     return unwrap<TransactionPage>(apiClient.get(`/wallet-engine/transactions${qs ? `?${qs}` : ''}`));
+  },
+  /** Server-authoritative wallet transaction history (Phase 2C.4). userId comes from the JWT. */
+  history: (params: WalletHistoryFilters = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => v !== undefined && v !== '' && q.set(k, String(v)));
+    const qs = q.toString();
+    return unwrap<WalletHistoryPage>(apiClient.get(`/wallet/history${qs ? `?${qs}` : ''}`));
   },
   transfer: (data: { currencyId: string; fromType: string; toType: string; amount: string }) =>
     unwrap<{ from: WalletView; to: WalletView }>(apiClient.post('/wallet-engine/transfer', data)),

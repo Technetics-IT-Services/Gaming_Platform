@@ -42,10 +42,17 @@ export interface AuthConfig {
   cookieSecure: boolean;
 }
 
+export interface AnalyticsConfig {
+  /** Operational safeguard: largest window one analytics/report query may scan. */
+  maxRangeDays: number;
+}
+
 export interface SecurityConfig {
   accountLockMaxAttempts: number;
   accountLockDurationMinutes: number;
   maxConcurrentSessions: number;
+  /** 0 = idle expiry disabled. */
+  sessionIdleTimeoutMinutes: number;
   passwordBreachCheckEnabled: boolean;
   emailVerificationTtlHours: number;
   passwordResetTtlMinutes: number;
@@ -72,6 +79,7 @@ export interface Configuration {
   redis: RedisConfig;
   auth: AuthConfig;
   security: SecurityConfig;
+  analytics: AnalyticsConfig;
   mail: MailConfig;
   throttle: ThrottleConfig;
 }
@@ -115,16 +123,26 @@ export default (): Configuration => {
       saltRounds: Number(env.BCRYPT_SALT_ROUNDS),
       cookieName: env.AUTH_COOKIE_NAME,
       cookieDomain: env.AUTH_COOKIE_DOMAIN,
-      cookieSecure: Boolean(env.AUTH_COOKIE_SECURE),
+      // `env` here is raw process.env (strings), so `Boolean('false')` was always truthy — the
+      // AUTH_COOKIE_SECURE flag was silently ignored (cookie always Secure). Compare the string
+      // explicitly so the documented `true`/`false` values actually take effect. Production sets
+      // `AUTH_COOKIE_SECURE=true` → cookie stays Secure (unchanged); this only makes `=false` work
+      // for plain-HTTP dev/staging/TLS-terminating-proxy deployments. (Phase 2C.13 config-correctness fix.)
+      cookieSecure: String(env.AUTH_COOKIE_SECURE) === 'true',
     },
     security: {
       accountLockMaxAttempts: Number(env.ACCOUNT_LOCK_MAX_ATTEMPTS),
       accountLockDurationMinutes: Number(env.ACCOUNT_LOCK_DURATION_MINUTES),
       maxConcurrentSessions: Number(env.MAX_CONCURRENT_SESSIONS),
+      // 0 = idle expiry disabled (default). See env.validation.ts.
+      sessionIdleTimeoutMinutes: Number(env.SESSION_IDLE_TIMEOUT_MINUTES ?? 0),
       passwordBreachCheckEnabled: Boolean(env.PASSWORD_BREACH_CHECK_ENABLED),
       emailVerificationTtlHours: Number(env.EMAIL_VERIFICATION_TTL_HOURS),
       passwordResetTtlMinutes: Number(env.PASSWORD_RESET_TTL_MINUTES),
       twoFactorIssuer: env.TWO_FACTOR_ISSUER,
+    },
+    analytics: {
+      maxRangeDays: Number(env.ANALYTICS_MAX_RANGE_DAYS ?? 366),
     },
     mail: {
       host: env.MAIL_HOST,

@@ -123,7 +123,7 @@ export function MatchCard({ match, featured = false }: { match: Match; featured?
           <span aria-hidden>{meta.flag}</span>
           <span className="truncate">
             {meta.name}
-            {meta.region ? <span className="text-muted-foreground/70"> · {meta.region}</span> : null}
+            {meta.region ? <span className="text-muted-foreground"> · {meta.region}</span> : null}
           </span>
         </span>
         {isLive ? (

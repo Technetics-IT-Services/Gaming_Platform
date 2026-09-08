@@ -45,8 +45,8 @@ export const RARITY_TEXT: Record<Rarity, string> = {
 
 /* ---- Profile Frames ------------------------------------------------------ */
 export const FRAMES: Cosmetic[] = [
-  { id: 'frame-bronze', name: 'Bronze', category: 'frame', rarity: 'common', price: 0, gradient: 'from-amber-600 to-amber-400', icon: 'Shield', starter: true },
-  { id: 'frame-silver', name: 'Silver', category: 'frame', rarity: 'common', price: 2500, gradient: 'from-slate-300 to-slate-100', icon: 'Shield' },
+  { id: 'frame-bronze', name: 'Bronze', category: 'frame', rarity: 'common', price: 0, gradient: 'from-amber-800 to-amber-700', icon: 'Shield', starter: true },
+  { id: 'frame-silver', name: 'Silver', category: 'frame', rarity: 'common', price: 2500, gradient: 'from-slate-600 to-slate-500', icon: 'Shield' },
   { id: 'frame-gold', name: 'Gold', category: 'frame', rarity: 'rare', price: 8000, gradient: 'from-gold to-warning', icon: 'Shield' },
   { id: 'frame-diamond', name: 'Diamond', category: 'frame', rarity: 'epic', price: 20000, gradient: 'from-accent to-primary', icon: 'Gem' },
   { id: 'frame-master', name: 'Master', category: 'frame', rarity: 'epic', price: 35000, gradient: 'from-violet to-pink', icon: 'Crown' },
@@ -63,8 +63,8 @@ export const THEMES: Cosmetic[] = [
   { id: 'theme-retro', name: 'Retro Arcade', category: 'theme', rarity: 'epic', price: 10000, gradient: 'from-pink via-gold to-accent', icon: 'Gamepad2' },
   { id: 'theme-future', name: 'Future', category: 'theme', rarity: 'epic', price: 12000, gradient: 'from-accent via-primary to-violet', icon: 'Rocket' },
   { id: 'theme-anime', name: 'Anime', category: 'theme', rarity: 'rare', price: 8000, gradient: 'from-pink via-violet to-accent', icon: 'Star' },
-  { id: 'theme-ocean', name: 'Ocean', category: 'theme', rarity: 'common', price: 4000, gradient: 'from-accent via-blue-400 to-primary', icon: 'Waves' },
-  { id: 'theme-forest', name: 'Forest', category: 'theme', rarity: 'common', price: 4000, gradient: 'from-emerald via-green-400 to-accent', icon: 'Trees' },
+  { id: 'theme-ocean', name: 'Ocean', category: 'theme', rarity: 'common', price: 4000, gradient: 'from-accent via-blue-700 to-primary', icon: 'Waves' },
+  { id: 'theme-forest', name: 'Forest', category: 'theme', rarity: 'common', price: 4000, gradient: 'from-emerald via-green-700 to-accent', icon: 'Trees' },
   { id: 'theme-space', name: 'Space', category: 'theme', rarity: 'legendary', price: 30000, gradient: 'from-violet via-indigo-500 to-primary', icon: 'Orbit' },
 ];
 

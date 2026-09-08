@@ -152,8 +152,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Revoke every session for the current user' })
-  logoutAll(@CurrentUser() user: AuthenticatedUser): Promise<{ revoked: number }> {
-    return this.authService.logoutAll(user.id);
+  logoutAll(
+    @CurrentUser() user: AuthenticatedUser,
+    @ReqMeta() meta: RequestMeta,
+  ): Promise<{ revoked: number }> {
+    // `meta` flows through so the bulk revocation is attributable (Phase 2D.2, audit gap #16).
+    return this.authService.logoutAll(user.id, undefined, meta);
   }
 
   @Get('me')

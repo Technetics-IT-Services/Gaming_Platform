@@ -124,7 +124,7 @@ export function ProvablyFair({ session }: { session: IGameSession | null }) {
       <summary className="flex cursor-pointer list-none items-center gap-1.5 font-semibold text-muted-foreground">
         <ShieldCheck className="h-3.5 w-3.5 text-emerald" />
         Provably fair
-        <span className="ml-auto text-[10px] text-muted-foreground/70 group-open:hidden">details</span>
+        <span className="ml-auto text-[10px] text-muted-foreground group-open:hidden">details</span>
       </summary>
       <div className="mt-2 space-y-1 text-muted-foreground">
         <p>

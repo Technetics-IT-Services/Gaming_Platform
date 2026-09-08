@@ -31,11 +31,12 @@ function FavoritesHero() {
 
 export default function FavoritesPage() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isDemoSession = useAuthStore((s) => s.isDemoSession);
   const initialized = useAuthStore((s) => s.initialized);
   const favorites = useQuery({
     queryKey: ['favorites'],
     queryFn: () => gamesApi.favorites(),
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isDemoSession,
   });
 
   if (initialized && !isAuthenticated) {

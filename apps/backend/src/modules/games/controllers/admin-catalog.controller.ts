@@ -8,9 +8,11 @@ import {
   Param,
   Post,
   Put,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
+import { AuditEntity, AuditMutationInterceptor } from '../../security/audit-mutation.interceptor';
 import { RequirePermissions } from '../../../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../../authorization/rbac.constants';
 import { CategoryService } from '../services/category.service';
@@ -33,6 +35,10 @@ import {
 @ApiTags('Admin · Categories')
 @ApiBearerAuth()
 @Controller('admin/game-categories')
+// Phase 2D.2 (audit gap #18): every SUCCESSFUL mutating request here is recorded in the audit
+// trail. One interceptor covers all mutation endpoints and cannot drift as routes are added.
+@UseInterceptors(AuditMutationInterceptor)
+@AuditEntity('game_catalog')
 export class AdminCategoriesController {
   constructor(private readonly categories: CategoryService) {}
 

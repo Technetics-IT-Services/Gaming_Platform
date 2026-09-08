@@ -46,6 +46,21 @@ model User {
   documents         Document[]
   emergencyContacts EmergencyContact[]
 
+  // ---- Finance ----
+  expensesCreated Expense[] @relation("ExpenseCreatedBy")
+
+  // ---- Partner membership (revenue-share stakeholder) ----
+  partnerMembership PartnerUser? @relation("PartnerMembership")
+
+  // ---- Support ticketing ----
+  supportTickets         SupportTicket[]        @relation("SupportTicketOwner")
+  assignedSupportTickets SupportTicket[]        @relation("SupportTicketAssignee")
+  supportMessages        SupportTicketMessage[] @relation("SupportMessageAuthor")
+
+  // ---- Responsible gaming (server-enforced compliance controls) ----
+  responsibleGamingLimits ResponsibleGamingLimit[] @relation("RgLimitUser")
+  accountRestrictions     AccountRestriction[]     @relation("RgRestrictionUser")
+
   // ---- Wallet relations ----
   wallets            Wallet[]
   walletTransactions WalletTransaction[]

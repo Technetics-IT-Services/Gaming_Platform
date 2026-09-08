@@ -98,7 +98,7 @@ const preset: Omit<Config, 'content'> = {
         'gradient-brand': 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--neon)) 100%)',
         'gradient-royal':
           'linear-gradient(135deg, hsl(var(--violet)) 0%, hsl(var(--primary)) 50%, hsl(var(--pink)) 100%)',
-        'gradient-gold': 'linear-gradient(135deg, hsl(var(--gold)) 0%, hsl(38 95% 55%) 100%)',
+        'gradient-gold': 'linear-gradient(135deg, hsl(var(--gold)) 0%, hsl(28 95% 34%) 100%)',
         'gradient-emerald': 'linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--neon)) 100%)',
         'gradient-sheen':
           'linear-gradient(110deg, transparent 25%, hsl(0 0% 100% / 0.14) 50%, transparent 75%)',

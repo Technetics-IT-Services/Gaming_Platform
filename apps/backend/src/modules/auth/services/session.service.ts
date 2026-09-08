@@ -1,6 +1,6 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SessionStatus, TokenStatus } from '@prisma/client';
-import { SecurityEventType, SecuritySeverity } from '@prisma/client';
+import { AuditAction, SecurityEventType, SecuritySeverity } from '@prisma/client';
 import type { AuthTokens, SessionSummary } from '@gaming-platform/types';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import type { Logger } from 'winston';
@@ -14,6 +14,7 @@ import {
 import type { RequestMeta } from '../../../common/security/request-meta';
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { AuditService } from '../../security/audit.service';
 import { SecurityEventService } from '../../security/security-event.service';
 import { GeoService } from '../../security/geo.service';
 import { type UserAuthz, RbacService } from '../../authorization/rbac.service';
@@ -56,6 +57,8 @@ export class SessionService {
     private readonly security: SecurityEventService,
     private readonly geo: GeoService,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+    // Phase 2D.2: bulk session revocation is recorded in the generic audit trail too.
+    private readonly audit: AuditService,
   ) {}
 
   private redisKey(sid: string): string {
@@ -144,6 +147,31 @@ export class SessionService {
       throw new UnauthorizedException('Malformed session');
     }
 
+    // ---- Phase 2D.2: server-authoritative IDLE-SESSION expiry -------------------------------
+    // Checked BEFORE anything is issued, so an idle session never mints a token on its way to being
+    // refused. `rotate()` is the single place a session is renewed and is already single-flight on
+    // the client, so there is no rotation storm; `lastActivityAt` is already maintained here.
+    // A client-side timer alone revokes nothing and would not be a real control.
+    await this.assertNotIdle(sessionId, user.id, meta);
+
+    // ---- Phase 2D.2: ATOMIC ROTATION CLAIM ---------------------------------------------------
+    // Previously the ACTIVE check at the top of this method and the ACTIVE -> USED write at the
+    // bottom were separated by several awaits. Six simultaneous refreshes presenting the SAME token
+    // therefore all read ACTIVE and all succeeded, minting six token families and slipping past
+    // reuse detection entirely (proven live in PHASE_2D2_SECURITY_TESTS.md, attack #16).
+    //
+    // The transition is now a single conditional UPDATE. Exactly one caller can match `status:
+    // ACTIVE`; every loser matches nothing, which is indistinguishable from presenting an
+    // already-rotated token — so it is handled by the SAME reuse path, burning the family.
+    const claimed = await this.prisma.refreshToken.updateMany({
+      where: { id: record.id, status: TokenStatus.ACTIVE },
+      data: { status: TokenStatus.USED },
+    });
+    if (claimed.count === 0) {
+      await this.handleReuse(record.userId, record.family, record.sessionId, meta);
+      throw new UnauthorizedException('Refresh token reuse detected. All sessions were revoked.');
+    }
+
     const authz = await this.rbac.getUserAuthz(user.id);
     const refreshTtlSeconds = Math.max(
       1,
@@ -167,9 +195,10 @@ export class SessionService {
       record.expiresAt,
     );
 
+    // The old token was already claimed atomically above; link it to its replacement.
     await this.prisma.refreshToken.update({
       where: { id: record.id },
-      data: { status: TokenStatus.USED, replacedById: newRecord.id },
+      data: { replacedById: newRecord.id },
     });
 
     await this.prisma.session.update({
@@ -234,8 +263,14 @@ export class SessionService {
     return { success: true };
   }
 
-  /** Revoke every session for a user, optionally keeping the current one. */
-  async revokeAll(userId: string, exceptSessionId?: string): Promise<{ revoked: number }> {
+  /**
+   * Revoke every session for a user, optionally keeping the current one.
+   *
+   * Phase 2D.2: bulk revocation is a security-critical action (it is what "log out everywhere" and a
+   * post-password-change cleanup do) and was previously recorded NOWHERE. It is now written to both
+   * audit stores after the revocation commits, carrying only the count — never a token or hash.
+   */
+  async revokeAll(userId: string, exceptSessionId?: string, meta?: RequestMeta | null): Promise<{ revoked: number }> {
     const sessions = await this.prisma.session.findMany({
       where: {
         userId,
@@ -245,7 +280,56 @@ export class SessionService {
       select: { id: true },
     });
     await Promise.all(sessions.map((s) => this.revokeSessionInternal(s.id)));
+
+    if (sessions.length > 0) {
+      await this.security.record({
+        userId,
+        type: SecurityEventType.LOGOUT,
+        severity: SecuritySeverity.MEDIUM,
+        description: `Bulk session revocation (${sessions.length} session(s))`,
+        meta: meta ?? null,
+      });
+      await this.audit.record({
+        userId,
+        action: AuditAction.DELETE,
+        entityType: 'sessions',
+        entityId: userId,
+        changes: { revoked: sessions.length, keptCurrent: Boolean(exceptSessionId) },
+        meta: meta ?? null,
+      });
+    }
     return { revoked: sessions.length };
+  }
+
+  /**
+   * Refuse (and revoke) a session that has been idle longer than the configured window.
+   *
+   * `SESSION_IDLE_TIMEOUT_MINUTES` defaults to 0 = DISABLED, so with no configuration this method is
+   * a no-op and behaviour is unchanged. No timeout value is invented here.
+   */
+  private async assertNotIdle(sessionId: string, userId: string, meta: RequestMeta): Promise<void> {
+    const minutes = this.config.security.sessionIdleTimeoutMinutes;
+    if (!minutes || minutes <= 0) return; // disabled — unchanged behaviour
+
+    const row = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { lastActivityAt: true },
+    });
+    const lastActivityAt = row?.lastActivityAt ?? null;
+    if (!lastActivityAt) return; // never active yet; nothing to expire
+
+    const idleMs = Date.now() - lastActivityAt.getTime();
+    if (idleMs <= minutes * 60_000) return;
+
+    await this.revokeSessionInternal(sessionId);
+    await this.security.record({
+      userId,
+      type: SecurityEventType.LOGOUT,
+      severity: SecuritySeverity.MEDIUM,
+      description: `Session expired after ${Math.round(idleMs / 60_000)} minutes idle (limit ${minutes})`,
+      meta,
+    });
+    throw new UnauthorizedException('Session expired due to inactivity');
   }
 
   // --- internals ------------------------------------------------------------

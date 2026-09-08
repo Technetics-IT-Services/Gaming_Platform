@@ -19,6 +19,7 @@ type Tab = 'live' | 'upcoming' | 'mybets';
 
 export default function SportsbookPage() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isDemoSession = useAuthStore((s) => s.isDemoSession);
   const [sport, setSport] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('upcoming');
   // Stable per-mount reference time so mock fixtures don't jitter across renders.
@@ -46,7 +47,7 @@ export default function SportsbookPage() {
   const myBets = useQuery({
     queryKey: ['sb-mybets'],
     queryFn: () => sportsApi.bets(),
-    enabled: tab === 'mybets' && isAuthenticated,
+    enabled: tab === 'mybets' && isAuthenticated && !isDemoSession,
   });
 
   // ---- Fallback wiring -----------------------------------------------------

@@ -61,7 +61,7 @@ interface Ranked {
 
 const PODIUM_META: Record<1 | 2 | 3, { grad: string; ring: string; glow: string; icon: LucideIcon; label: string; badge: 'gold' | 'featured' | 'neon'; h: string }> = {
   1: { grad: 'from-gold via-warning to-gold', ring: 'ring-gold/60', glow: 'shadow-glow-gold', icon: Crown, label: 'Champion', badge: 'gold', h: 'h-40' },
-  2: { grad: 'from-slate-300 to-slate-400', ring: 'ring-black/15', glow: 'shadow-glow-sm', icon: Medal, label: 'Runner-up', badge: 'featured', h: 'h-32' },
+  2: { grad: 'from-slate-600 to-slate-500', ring: 'ring-black/15', glow: 'shadow-glow-sm', icon: Medal, label: 'Runner-up', badge: 'featured', h: 'h-32' },
   3: { grad: 'from-amber-600 to-orange-400', ring: 'ring-warning/40', glow: 'shadow-glow-sm', icon: Medal, label: 'Third', badge: 'neon', h: 'h-28' },
 };
 

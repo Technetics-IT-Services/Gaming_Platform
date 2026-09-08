@@ -50,6 +50,7 @@ export function GameCard({
               seed={game.id}
               hint={`${game.category?.slug ?? ''} ${game.category?.name ?? ''}`}
               priority={priority}
+              showTitle={false}
             />
 
             {/* badges */}
@@ -67,7 +68,7 @@ export function GameCard({
 
             {/* RTP chip */}
             {game.rtp ? (
-              <div className="absolute right-2 top-2 z-10 rounded-md border border-black/10 bg-white/80 px-1.5 py-0.5 text-[10px] font-bold text-emerald backdrop-blur">
+              <div className="absolute right-2 top-2 z-10 rounded-md border border-black/10 bg-card px-1.5 py-0.5 text-[10px] font-bold text-emerald">
                 {game.rtp}% RTP
               </div>
             ) : null}
@@ -80,7 +81,7 @@ export function GameCard({
             </div>
 
             {/* live players */}
-            <div className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-full bg-black/35 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
+            <div className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
               <Users className="h-3 w-3" />
               <span className="tabular-nums">{players.toLocaleString('en-US')}</span>

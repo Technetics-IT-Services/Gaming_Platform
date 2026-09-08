@@ -363,7 +363,7 @@ function Pedestal({ item, index, onClick, big }: { item: TrophyItem; index: numb
       <div className={cn('mt-2 h-1.5 w-2/3 rounded-full bg-gradient-to-r opacity-70', r.grad)} />
       <p className="mt-2 line-clamp-1 text-sm font-semibold">{item.name}</p>
       <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{item.desc}</p>
-      <span className={cn('mt-2 text-[10px] font-semibold uppercase tracking-wide', item.unlocked ? r.text : 'text-muted-foreground/60')}>
+      <span className={cn('mt-2 text-[10px] font-semibold uppercase tracking-wide', item.unlocked ? r.text : 'text-muted-foreground')}>
         {item.unlocked ? r.label : 'Locked'}
       </span>
     </motion.button>

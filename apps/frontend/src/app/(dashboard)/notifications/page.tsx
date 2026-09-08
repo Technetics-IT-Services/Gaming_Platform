@@ -1,310 +1,233 @@
 'use client';
 
-import { Badge, Button, cn } from '@gaming-platform/ui';
-import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Bell,
-  CalendarClock,
-  CheckCheck,
-  Coins,
-  Gift,
-  Inbox,
-  type LucideIcon,
-  MessageCircle,
-  PartyPopper,
-  Rocket,
-  ShieldCheck,
-  Sparkles,
-  Trophy,
-  UserPlus,
-  Wrench,
-  Zap,
-} from 'lucide-react';
-import Link from 'next/link';
-import { useMemo, useState } from 'react';
-
-/* ---- Types & deterministic data ----------------------------------------- */
-
-type Category = 'Rewards' | 'Tournaments' | 'Social' | 'Wins' | 'System';
-
-interface Notification {
-  id: string;
-  category: Category;
-  icon: LucideIcon;
-  title: string;
-  desc: string;
-  time: string;
-  unread: boolean;
-  href: string;
-}
-
 /**
- * Deterministic, presentation-only mock notifications. Defined at module
- * scope — no Date.now()/Math.random(), so the list is stable across renders
- * and never empty.
+ * Notification centre (Phase 2D.1) — mobile-first, 100% server-backed.
+ *
+ * This page previously rendered a HARDCODED array of four notifications with `useState` read tracking
+ * that was lost on every reload. It is now driven entirely by `GET /notifications`: content, read
+ * state, unread count and pagination are all server-authoritative, and read state persists.
+ *
+ * There is no demo-wallet dependency and no fabricated row. A demo session cannot reach the endpoint
+ * (the api-client blocks `/notifications`), so it is shown the real-account notice instead.
+ *
+ * Only in-app notifications exist — no email, SMS or push provider is configured in this deployment,
+ * and nothing here claims otherwise.
  */
-const NOTIFICATIONS: Notification[] = [
-  // Rewards
-  { id: 'rw-1', category: 'Rewards', icon: Gift, title: 'Welcome bonus ready', desc: 'Claim 100% up to $500 on your next deposit.', time: 'now', unread: true, href: '/rewards' },
-  { id: 'rw-2', category: 'Rewards', icon: Coins, title: 'Daily reward unlocked', desc: 'Your Day 4 streak reward is waiting.', time: '38m', unread: true, href: '/daily' },
-  { id: 'rw-3', category: 'Rewards', icon: Sparkles, title: 'Battle Pass tier up', desc: 'You reached Tier 37 — a Mystery Box dropped.', time: '3h', unread: false, href: '/rewards' },
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell, CheckCheck, Gamepad2, Gift, Megaphone, ShieldCheck, Wallet } from 'lucide-react';
+import { useState } from 'react';
 
-  // Tournaments
-  { id: 'tn-1', category: 'Tournaments', icon: Trophy, title: 'Weekend Showdown starts soon', desc: 'Kicks off in 2h — a $1,000,000 pool awaits.', time: '12m', unread: true, href: '/tournaments' },
-  { id: 'tn-2', category: 'Tournaments', icon: CalendarClock, title: 'Registration closing', desc: 'Crash Masters entry closes in 45 minutes.', time: '1h', unread: true, href: '/tournaments' },
-  { id: 'tn-3', category: 'Tournaments', icon: Rocket, title: 'You climbed to #6', desc: 'Nice run — 3 spots to reach the prize zone.', time: '4h', unread: false, href: '/leaderboards' },
+import { RealAccountRequired } from '@/components/auth/real-money-guard';
+import { useRealSession } from '@/hooks/use-real-session';
+import { fmtTime } from '@/lib/datetime';
+import { notificationsApi, type NotificationType, type NotificationView } from '@/lib/notifications-api';
 
-  // Social
-  { id: 'so-1', category: 'Social', icon: UserPlus, title: 'NovaStrike sent a friend request', desc: 'Tap to accept and squad up.', time: '9m', unread: true, href: '/friends' },
-  { id: 'so-2', category: 'Social', icon: MessageCircle, title: 'CryptoFox invited you', desc: 'Join their Roulette Night table.', time: '54m', unread: true, href: '/friends' },
-  { id: 'so-3', category: 'Social', icon: PartyPopper, title: 'LunaBet is now online', desc: 'Your friend just hopped into the lobby.', time: '2h', unread: false, href: '/friends' },
+const PAGE_SIZE = 20;
 
-  // Wins
-  { id: 'wn-1', category: 'Wins', icon: Zap, title: 'Crash hit 25.3×', desc: 'A player just cashed out big on Crash.', time: '24m', unread: true, href: '/arcade' },
-  { id: 'wn-2', category: 'Wins', icon: Trophy, title: 'Jackpot won on Dice', desc: 'PixelKing landed a $42,180 triple.', time: '1h', unread: false, href: '/arcade' },
-  { id: 'wn-3', category: 'Wins', icon: Coins, title: 'Your best win this week', desc: 'You cashed out $3,240 on Roulette.', time: '1d', unread: false, href: '/transactions' },
-
-  // System
-  { id: 'sy-1', category: 'System', icon: ShieldCheck, title: 'New login detected', desc: 'A sign-in from a new device was verified.', time: '5h', unread: true, href: '/settings/security' },
-  { id: 'sy-2', category: 'System', icon: Wrench, title: 'Scheduled maintenance', desc: 'Brief downtime planned Sunday 03:00 UTC.', time: '1d', unread: false, href: '/settings' },
-  { id: 'sy-3', category: 'System', icon: Sparkles, title: 'New games added', desc: '8 fresh titles landed in the arcade.', time: '2d', unread: false, href: '/games?sort=newest' },
-  { id: 'sy-4', category: 'System', icon: ShieldCheck, title: 'Verification approved', desc: 'Your account limits have been increased.', time: '3d', unread: false, href: '/settings' },
-];
-
-const CATEGORIES: Category[] = ['Rewards', 'Tournaments', 'Social', 'Wins', 'System'];
-
-/** Per-category visual identity (icon chip gradient + accent text/dot). */
-const CATEGORY_STYLE: Record<
-  Category,
-  { chip: string; text: string; dot: string; badge: 'neon' | 'gold' | 'success' | 'new' | 'featured' }
-> = {
-  Rewards: { chip: 'from-gold to-warning', text: 'text-gold', dot: 'bg-gold', badge: 'gold' },
-  Tournaments: { chip: 'from-primary to-violet', text: 'text-primary', dot: 'bg-primary', badge: 'featured' },
-  Social: { chip: 'from-pink to-violet', text: 'text-pink', dot: 'bg-pink', badge: 'neon' },
-  Wins: { chip: 'from-emerald to-accent', text: 'text-emerald', dot: 'bg-emerald', badge: 'success' },
-  System: { chip: 'from-accent to-primary', text: 'text-accent', dot: 'bg-accent', badge: 'new' },
+/** Icon + tone per server notification type. Purely presentational. */
+const TYPE_META: Record<NotificationType, { icon: typeof Bell; tone: string; label: string }> = {
+  TRANSACTION: { icon: Wallet, tone: '#0f7a4a', label: 'Wallet' },
+  SECURITY: { icon: ShieldCheck, tone: '#8a5300', label: 'Security' },
+  GAME: { icon: Gamepad2, tone: '#1d4ed8', label: 'Game' },
+  PROMOTION: { icon: Gift, tone: '#be185d', label: 'Promotion' },
+  ACCOUNT: { icon: Bell, tone: '#6d28d9', label: 'Account' },
+  KYC: { icon: ShieldCheck, tone: '#8a5300', label: 'Verification' },
+  SYSTEM: { icon: Megaphone, tone: '#515970', label: 'System' },
 };
 
-type Filter = 'All' | 'Unread' | Category;
+function meta(type: NotificationType) {
+  return TYPE_META[type] ?? TYPE_META.SYSTEM;
+}
 
-/* ---- Presentational row ------------------------------------------------- */
+export default function NotificationsPage() {
+  const realSession = useRealSession();
+  const qc = useQueryClient();
+  const [page, setPage] = useState(1);
 
-function NotificationRow({
-  note,
-  onRead,
-}: {
-  note: Notification;
-  onRead: (id: string) => void;
-}) {
-  const Icon = note.icon;
-  const style = CATEGORY_STYLE[note.category];
+  const q = useQuery({
+    queryKey: ['notifications', 'list', page],
+    queryFn: () => notificationsApi.list({ page, limit: PAGE_SIZE }),
+    enabled: realSession,
+  });
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['notifications'] });
+  };
+
+  const markRead = useMutation({
+    mutationFn: (id: string) => notificationsApi.markRead(id),
+    onSuccess: invalidate,
+  });
+  const markAll = useMutation({
+    mutationFn: () => notificationsApi.markAllRead(),
+    onSuccess: invalidate,
+  });
+
+  if (!realSession) return <RealAccountRequired />;
+
+  const items = q.data?.items ?? [];
+  const unread = q.data?.unread ?? 0;
+  const pages = q.data?.pages ?? 0;
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -12 }}
-      transition={{ duration: 0.22 }}
+    <div
+      data-testid="notifications-page"
+      style={{ color: '#1b1f37', maxWidth: 480, margin: '0 auto', padding: '12px 12px 28px', boxSizing: 'border-box' }}
     >
-      <Link
-        href={note.href}
-        onClick={() => onRead(note.id)}
-        className={cn(
-          'group flex items-start gap-3 rounded-xl border p-3.5 transition-all hover:-translate-y-0.5',
-          note.unread
-            ? 'glass border-black/10 shadow-glow-sm hover:shadow-glow'
-            : 'border-black/[0.06] bg-white/[0.02] hover:bg-black/5',
-        )}
-      >
-        <span
-          className={cn(
-            'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-glow-sm',
-            style.chip,
-          )}
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, margin: '0 2px 12px' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          Notifications
+          {unread > 0 ? (
+            <span
+              data-testid="unread-count"
+              style={{ background: '#be185d', color: '#fff', borderRadius: 999, padding: '2px 8px', fontSize: 12, fontWeight: 800 }}
+            >
+              {unread}
+            </span>
+          ) : null}
+        </h1>
+        <button
+          data-testid="mark-all-read"
+          onClick={() => markAll.mutate()}
+          disabled={unread === 0 || markAll.isPending}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 44, padding: '0 14px',
+            borderRadius: 12, border: '1px solid #b9c1d4', background: unread === 0 ? '#ebeef5' : '#ffffff',
+            color: unread === 0 ? '#515970' : '#1b1f37', fontSize: 13, fontWeight: 700,
+            cursor: unread === 0 ? 'default' : 'pointer',
+          }}
         >
-          <Icon className="h-5 w-5" />
-        </span>
+          <CheckCheck size={16} /> Mark all
+        </button>
+      </header>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className={cn('truncate text-sm font-semibold', note.unread && 'text-foreground')}>
-              {note.title}
-            </p>
-            {note.unread ? (
-              <span className={cn('h-2 w-2 shrink-0 rounded-full', style.dot)} aria-label="unread" />
-            ) : null}
-          </div>
-          <p className="truncate text-xs text-muted-foreground">{note.desc}</p>
-          <span className={cn('mt-1 inline-block text-[10px] font-semibold uppercase tracking-wide', style.text)}>
-            {note.category}
-          </span>
+      {q.isLoading ? (
+        <div data-testid="notifications-loading" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} style={{ height: 78, borderRadius: 14, background: '#ffffff', border: '1px solid #ccd2e0' }} />
+          ))}
         </div>
+      ) : q.isError ? (
+        <div
+          data-testid="notifications-error"
+          role="alert"
+          style={{ border: '1px solid #f0b4b0', background: '#fef2f2', borderRadius: 14, padding: 16, fontSize: 14, color: '#b42318' }}
+        >
+          Could not load your notifications right now. Please try again.
+        </div>
+      ) : items.length === 0 ? (
+        <div
+          data-testid="notifications-empty"
+          style={{ textAlign: 'center', padding: '48px 16px', border: '1px dashed #b9c1d4', borderRadius: 16 }}
+        >
+          <Bell size={30} color="#515970" />
+          <p style={{ fontSize: 15, fontWeight: 700, margin: '12px 0 4px' }}>No notifications yet</p>
+          <p style={{ fontSize: 13, color: '#515970', margin: 0 }}>
+            Deposits, withdrawals and security updates will appear here.
+          </p>
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {items.map((n) => (
+            <NotificationRow key={n.id} n={n} onRead={() => markRead.mutate(n.id)} busy={markRead.isPending} />
+          ))}
+        </ul>
+      )}
 
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-          {note.time}
-        </span>
-      </Link>
-    </motion.div>
+      {pages > 1 ? (
+        <nav aria-label="Pagination" style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 16 }}>
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            style={pagerStyle(page <= 1)}
+          >
+            ← Newer
+          </button>
+          <span style={{ alignSelf: 'center', fontSize: 12, color: '#515970' }}>
+            Page {page} of {pages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            disabled={page >= pages}
+            style={pagerStyle(page >= pages)}
+          >
+            Older →
+          </button>
+        </nav>
+      ) : null}
+
+      <p style={{ fontSize: 11, color: '#626a7e', marginTop: 18, lineHeight: 1.5 }}>
+        In-app notifications only. Email, SMS and push delivery are not configured for this deployment.
+      </p>
+    </div>
   );
 }
 
-/* ---- Page --------------------------------------------------------------- */
-
-export default function NotificationsPage() {
-  // Local read-state overlay on top of the deterministic seed data.
-  const [readIds, setReadIds] = useState<Record<string, true>>({});
-  const [filter, setFilter] = useState<Filter>('All');
-
-  const items = useMemo(
-    () => NOTIFICATIONS.map((n) => ({ ...n, unread: n.unread && !readIds[n.id] })),
-    [readIds],
-  );
-
-  const unreadCount = items.filter((n) => n.unread).length;
-
-  const markRead = (id: string) => setReadIds((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
-  const markAllRead = () => {
-    const all: Record<string, true> = {};
-    for (const n of NOTIFICATIONS) all[n.id] = true;
-    setReadIds(all);
+function pagerStyle(disabled: boolean): React.CSSProperties {
+  return {
+    minHeight: 44, padding: '0 16px', borderRadius: 12,
+    border: '1px solid #b9c1d4', background: '#ffffff',
+    color: disabled ? '#515970' : '#1b1f37', fontSize: 13, fontWeight: 700,
+    cursor: disabled ? 'default' : 'pointer',
   };
+}
 
-  const filtered = useMemo(() => {
-    if (filter === 'All') return items;
-    if (filter === 'Unread') return items.filter((n) => n.unread);
-    return items.filter((n) => n.category === filter);
-  }, [items, filter]);
-
-  // Split into active (unread, or everything under a category/All view) and history (read).
-  const showHistorySplit = filter === 'All' || filter === 'Unread';
-  const active = showHistorySplit ? filtered.filter((n) => n.unread) : filtered.filter((n) => n.unread);
-  const history = showHistorySplit
-    ? filtered.filter((n) => !n.unread)
-    : filtered.filter((n) => !n.unread);
-
-  const tabs: Filter[] = ['All', 'Unread', ...CATEGORIES];
-
+function NotificationRow({ n, onRead, busy }: { n: NotificationView; onRead: () => void; busy: boolean }) {
+  const m = meta(n.type);
+  const Icon = m.icon;
   return (
-    <div className="relative space-y-6">
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-grid opacity-[0.35]" />
+    <li
+      data-testid={n.read ? 'notification-read' : 'notification-unread'}
+      style={{
+        display: 'flex', gap: 12, padding: 14, borderRadius: 14,
+        background: n.read ? '#ebeef5' : '#ffffff',
+        border: `1px solid ${n.read ? '#ccd2e0' : '#b9c1d4'}`,
+        borderLeft: `3px solid ${n.read ? 'transparent' : m.tone}`,
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex', width: 36, height: 36, flex: '0 0 36px', alignItems: 'center',
+          justifyContent: 'center', borderRadius: 10, background: '#ebeef5', border: '1px solid #ccd2e0',
+        }}
+      >
+        <Icon size={17} color={m.tone} />
+      </span>
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-violet text-white shadow-glow">
-            <Bell className="h-6 w-6" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 15, fontWeight: n.read ? 600 : 800 }}>{n.title}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: m.tone }}>
+            {m.label}
           </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-display text-3xl font-bold text-gradient">Notifications</h1>
-              {unreadCount > 0 ? (
-                <Badge variant="neon" className="font-mono tabular-nums">
-                  {unreadCount} new
-                </Badge>
-              ) : (
-                <Badge variant="success">All read</Badge>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground">Rewards, tournaments, social and system updates.</p>
-          </div>
         </div>
-
-        <Button variant="glass" size="sm" onClick={markAllRead} disabled={unreadCount === 0}>
-          <CheckCheck className="mr-1.5 h-4 w-4" />
-          Mark all read
-        </Button>
-      </div>
-
-      {/* Filter tabs */}
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((tab) => {
-          const count =
-            tab === 'All'
-              ? items.length
-              : tab === 'Unread'
-                ? unreadCount
-                : items.filter((n) => n.category === tab).length;
-          const activeTab = filter === tab;
-          return (
+        {/* Server-generated text rendered as TEXT — never as HTML. */}
+        <p style={{ fontSize: 13, color: '#515970', margin: '4px 0 6px', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+          {n.body}
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <time style={{ fontSize: 11, color: '#626a7e' }} dateTime={n.createdAt}>
+            {fmtTime(new Date(n.createdAt).getTime())}
+          </time>
+          {!n.read ? (
             <button
-              key={tab}
-              type="button"
-              onClick={() => setFilter(tab)}
-              className={cn(
-                'sheen inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all',
-                activeTab
-                  ? 'border-transparent bg-gradient-to-r from-primary to-violet text-white shadow-glow-sm'
-                  : 'border-black/10 bg-white/[0.03] text-muted-foreground hover:border-primary/40 hover:text-foreground',
-              )}
+              data-testid="mark-read"
+              onClick={onRead}
+              disabled={busy}
+              style={{
+                minHeight: 44, padding: '0 12px', borderRadius: 10, border: '1px solid #b9c1d4',
+                background: 'transparent', color: '#1d4ed8', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}
             >
-              {tab}
-              <span
-                className={cn(
-                  'font-mono text-[10px] tabular-nums',
-                  activeTab ? 'text-white/80' : 'text-muted-foreground/70',
-                )}
-              >
-                {count}
-              </span>
+              Mark read
             </button>
-          );
-        })}
+          ) : null}
+        </div>
       </div>
 
-      {/* Active list */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
-          <h2 className="font-display text-sm font-bold uppercase tracking-wide text-muted-foreground">
-            {filter === 'Unread' || filter === 'All' ? 'New' : filter}
-          </h2>
-        </div>
-
-        {active.length > 0 ? (
-          <motion.div layout className="space-y-2.5">
-            <AnimatePresence initial={false}>
-              {active.map((note) => (
-                <NotificationRow key={note.id} note={note} onRead={markRead} />
-              ))}
-            </AnimatePresence>
-          </motion.div>
-        ) : (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="card-premium sheen flex flex-col items-center justify-center gap-2 p-10 text-center"
-          >
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald to-accent text-white shadow-glow">
-              <Inbox className="h-7 w-7" />
-            </span>
-            <p className="font-display text-lg font-bold text-gradient">You&apos;re all caught up</p>
-            <p className="max-w-xs text-sm text-muted-foreground">
-              No new notifications here. Check History below for the older ones.
-            </p>
-          </motion.div>
-        )}
-      </section>
-
-      {/* History (older / read) */}
-      {history.length > 0 ? (
-        <section className="space-y-3">
-          <div className="flex items-center gap-2">
-            <CalendarClock className="h-4 w-4 text-muted-foreground" />
-            <h2 className="font-display text-sm font-bold uppercase tracking-wide text-muted-foreground">
-              History
-            </h2>
-          </div>
-          <motion.div layout className="space-y-2.5 opacity-90">
-            <AnimatePresence initial={false}>
-              {history.map((note) => (
-                <NotificationRow key={note.id} note={note} onRead={markRead} />
-              ))}
-            </AnimatePresence>
-          </motion.div>
-        </section>
+      {!n.read ? (
+        <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: m.tone, alignSelf: 'center', flex: '0 0 8px' }} />
       ) : null}
-    </div>
+    </li>
   );
 }

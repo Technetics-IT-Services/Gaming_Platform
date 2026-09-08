@@ -378,7 +378,7 @@ export default function MarketplacePage() {
                 >
                   <div className="bg-grid absolute inset-0 opacity-10" />
                   <Icon className="relative h-11 w-11 text-white drop-shadow-lg" />
-                  <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur">
+                  <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 font-mono text-[11px] font-bold text-white backdrop-blur">
                     <Timer className="h-3 w-3" /> {fmtCountdown(secs)}
                   </span>
                 </button>
@@ -491,7 +491,7 @@ export default function MarketplacePage() {
                       <div key={item.id} className="card-premium group relative overflow-hidden p-2.5">
                         <button
                           onClick={() => toggleWish(item.id, item.name)}
-                          className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/30 text-white backdrop-blur transition-colors hover:bg-black/45"
+                          className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur transition-colors hover:bg-black/65"
                           aria-label={wished ? 'Remove from wishlist' : 'Add to wishlist'}
                         >
                           <Heart className={cn('h-3.5 w-3.5', wished && 'fill-pink text-pink')} />

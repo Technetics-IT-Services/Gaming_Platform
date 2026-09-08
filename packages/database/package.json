@@ -24,6 +24,7 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist .turbo"
@@ -36,6 +37,7 @@
     "@prisma/client": "^6.2.1"
   },
   "devDependencies": {
+    "@gaming-platform/auth": "workspace:*",
     "@gaming-platform/config": "workspace:*",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",
@@ -43,6 +45,7 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.9"
   }
 }

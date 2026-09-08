@@ -29,6 +29,12 @@ export interface AuthUserView {
   lastLoginAt: string | null;
 }
 
+export interface VerificationStatus {
+  email: { verified: boolean };
+  phone: { hasPhone: boolean; verified: boolean };
+  identity: { available: boolean; status: string; level: string | null; submittedAt: Date | null; reviewedAt: Date | null };
+}
+
 const withProfile = Prisma.validator<Prisma.UserDefaultArgs>()({
   include: { profile: true, avatar: true },
 });
@@ -47,6 +53,31 @@ export class UsersService {
 
   findById(id: string): Promise<PrismaUser | null> {
     return this.prisma.user.findFirst({ where: { id, deletedAt: null } });
+  }
+
+  /**
+   * The authenticated user's verification status — REAL state only (email/phone flags on the user +
+   * the latest KycVerification record). When no KYC record exists, `identity.available` is false so
+   * the client can say so truthfully. No enforcement or compliance is claimed here.
+   */
+  async verification(userId: string): Promise<VerificationStatus> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { emailVerified: true, phoneVerified: true, phoneNumber: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    const kyc = await this.prisma.kycVerification.findFirst({
+      where: { userId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true, level: true, submittedAt: true, reviewedAt: true },
+    });
+    return {
+      email: { verified: user.emailVerified },
+      phone: { hasPhone: !!user.phoneNumber, verified: user.phoneVerified },
+      identity: kyc
+        ? { available: true, status: kyc.status, level: kyc.level, submittedAt: kyc.submittedAt, reviewedAt: kyc.reviewedAt }
+        : { available: false, status: 'NOT_STARTED', level: null, submittedAt: null, reviewedAt: null },
+    };
   }
 
   findByEmail(email: string): Promise<PrismaUser | null> {

@@ -4,6 +4,7 @@ import { Button } from '@gaming-platform/ui';
 import { Wallet } from 'lucide-react';
 import Link from 'next/link';
 
+import { DemoFundsBadge } from '@/components/wallet/demo-funds-badge';
 import { useDemoWallet } from '@/stores/demo-wallet';
 
 /**
@@ -22,7 +23,9 @@ export function DepositRequired({ className }: { className?: string }) {
         <Wallet className="h-8 w-8" />
       </span>
       <div className="space-y-1">
-        <h2 className="font-display text-2xl font-bold text-foreground">Add funds to play</h2>
+        <h2 className="flex items-center justify-center gap-2 font-display text-2xl font-bold text-foreground">
+          Add funds to play <DemoFundsBadge />
+        </h2>
         <p className="max-w-md text-sm text-muted-foreground">
           You need to deposit funds before placing bets. Browsing is always free.
         </p>
@@ -37,8 +40,10 @@ export function DepositRequired({ className }: { className?: string }) {
 }
 
 /**
- * Gates a betting surface: renders the game while the wallet has funds, and the
- * deposit prompt when the balance is ₹0.
+ * Gates a FUN-PLAY betting surface: renders the game while the demo wallet has funds, and the deposit
+ * prompt when it is ₹0. This reads the client-side demo wallet by design — it guards `/dice`,
+ * `/crash`, `/roulette` and the demo play shell, never a `*-money` route. Real-money tables are
+ * server-authoritative and do not use this gate (Phase 2C.17, Phase G).
  */
 export function BetGate({ children }: { children: React.ReactNode }) {
   const balance = useDemoWallet((s) => s.balance);

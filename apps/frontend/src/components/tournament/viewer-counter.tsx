@@ -37,7 +37,7 @@ export function ViewerCounter({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-semibold text-destructive ring-1 ring-inset ring-destructive/30',
+        'inline-flex items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs font-semibold text-destructive ring-1 ring-inset ring-destructive/30',
         className,
       )}
     >
@@ -47,7 +47,7 @@ export function ViewerCounter({
       </span>
       <Eye className="h-3.5 w-3.5" aria-hidden />
       <span className="tabular-nums">{count.toLocaleString('en-US')}</span>
-      <span className="font-normal text-destructive/80">{label}</span>
+      <span className="font-normal text-destructive">{label}</span>
     </span>
   );
 }

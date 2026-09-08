@@ -21,6 +21,13 @@ const nextConfig = {
   images: {
     remotePatterns: [{ protocol: 'https', hostname: '**' }],
   },
+  // Optional same-origin API proxy (opt-in via BACKEND_ORIGIN). Mirrors the production
+  // reverse-proxy (nginx) so the browser talks to a single origin and the auth refresh
+  // cookie flows natively. No effect when BACKEND_ORIGIN is unset (default behaviour).
+  async rewrites() {
+    const backend = process.env.BACKEND_ORIGIN;
+    return backend ? [{ source: '/api/:path*', destination: `${backend}/api/:path*` }] : [];
+  },
   eslint: {
     ignoreDuringBuilds: false,
   },
