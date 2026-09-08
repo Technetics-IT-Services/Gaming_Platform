@@ -17,6 +17,14 @@ import { recordLedger, resetWalletLedger } from './wallet-ledger';
 /** Amount granted by the legacy demo "reload" convenience (cosmetics store). */
 export const DEMO_RELOAD = 100_000;
 
+/**
+ * Play-money a brand-new browser starts with, so a client can try the games immediately.
+ *
+ * This is DEMO money. It lives only in this localStorage-backed store, it is never sent to the
+ * backend, and it can never become a real balance — see `initializeDemoFunds`.
+ */
+export const DEMO_STARTING_BALANCE = 5_000;
+
 export type TxnType =
   | 'deposit'
   | 'withdraw'
@@ -101,6 +109,14 @@ interface DemoWalletState {
     net: number;
     multiplier?: number;
   }) => void;
+  /**
+   * Grant the one-time starting play-money on a brand-new browser.
+   *
+   * Idempotent by construction: it does nothing unless the wallet is *completely untouched*
+   * (no balance, no vault, no transaction, no bet). A client who has played and spent down to
+   * zero is NOT topped up again, and a reload never re-grants.
+   */
+  initializeDemoFunds: () => void;
   /** Legacy demo top-up used by the cosmetics store. */
   reload: () => void;
   /** Reset all demo wallet data (e.g. on logout). */
@@ -250,6 +266,30 @@ export const useDemoWallet = create<DemoWalletState>()(
             return { betSeq: seq, bets: [record, ...s.bets].slice(0, MAX_LEDGER) };
           }),
 
+        initializeDemoFunds: () =>
+          set((s) => {
+            // "Untouched" is the whole guard. txnSeq is the decisive part: it only ever
+            // increases, so once a client has played, this can never fire again — even if
+            // their balance is back to 0.
+            const untouched =
+              s.txnSeq === 0 &&
+              s.betSeq === 0 &&
+              s.balance === 0 &&
+              s.vault === 0 &&
+              s.transactions.length === 0 &&
+              s.bets.length === 0;
+            if (!untouched) return s;
+            const balance = DEMO_STARTING_BALANCE;
+            recordLedger('bonus', balance, { preBalance: 0, preVault: 0, reason: 'demo-start' });
+            return {
+              balance,
+              ...withTxn(s, 'bonus', balance, balance, {
+                label: 'Demo funds',
+                note: 'demo-start',
+              }),
+            };
+          }),
+
         reload: () =>
           set((s) => {
             // Top up to the demo baseline, recording it as a Bonus so every
@@ -284,3 +324,19 @@ export const useDemoWallet = create<DemoWalletState>()(
     },
   ),
 );
+
+/**
+ * Grant the starting play-money once the store has finished reading localStorage.
+ *
+ * `onFinishHydration` is used rather than `onRehydrateStorage`: the latter fires BEFORE the
+ * merged state has landed, so the "untouched wallet" guard saw an empty store and re-granted,
+ * resetting a returning client's balance back to the starting amount. This runs after hydration
+ * completes, with the client's real state in place.
+ *
+ * Browser-only by construction — there is no hydration during a server render.
+ */
+if (typeof window !== 'undefined') {
+  const grantOnce = () => useDemoWallet.getState().initializeDemoFunds();
+  if (useDemoWallet.persist.hasHydrated()) grantOnce();
+  else useDemoWallet.persist.onFinishHydration(grantOnce);
+}

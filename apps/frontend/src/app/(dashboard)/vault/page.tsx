@@ -2,7 +2,6 @@
 
 import { Button, Input, cn } from '@gaming-platform/ui';
 import { ArrowRightLeft, Coins, Info, Lightbulb, Lock, ShieldCheck, Zap } from 'lucide-react';
-import Link from 'next/link';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -70,19 +69,21 @@ export default function VaultPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="card-premium flex flex-col gap-1 p-6 sm:p-7">
               <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <Coins className="h-4 w-4 text-gold" /> Wallet
+                <Coins className="h-4 w-4 text-gold" /> DEMO BALANCE
               </span>
               <span className="font-mono text-4xl font-extrabold tabular-nums text-foreground">
                 ₹<AnimatedNumber value={balance} />
               </span>
+              <span className="text-xs text-muted-foreground">Play-money for testing only</span>
             </div>
             <div className="card-premium flex flex-col gap-1 p-6 sm:p-7">
               <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <Lock className="h-4 w-4 text-violet" /> Vault
+                <Lock className="h-4 w-4 text-violet" /> DEMO VAULT
               </span>
               <span className="font-mono text-4xl font-extrabold tabular-nums text-foreground">
                 ₹<AnimatedNumber value={vault} />
               </span>
+              <span className="text-xs text-muted-foreground">Play-money for testing only</span>
             </div>
           </div>
 
@@ -207,19 +208,13 @@ export default function VaultPage() {
             icon={Info}
             tone="text-accent"
             title="Demo mode"
-            desc="This is a demo environment. Balances are stored locally on this device."
+            desc="DEMO FUNDS. Play-money for testing only — stored in this browser, never on the server, and never withdrawable."
           />
           <WalletInfoCard icon={Lightbulb} tone="text-gold" title="Vault tips">
             <ul className="mt-1 space-y-1.5 text-sm text-muted-foreground">
               <li>• Only wallet funds can be bet — vault funds are safe.</li>
               <li>• Move money back to your wallet any time to play.</li>
-              <li>
-                • Need more?{' '}
-                <Link href="/deposit" className="font-semibold text-primary hover:underline">
-                  Deposit
-                </Link>
-                .
-              </li>
+              <li>• This is play-money. It is not real currency and cannot be withdrawn.</li>
             </ul>
           </WalletInfoCard>
         </aside>
