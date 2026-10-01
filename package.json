@@ -39,14 +39,14 @@
     "docker:logs": "docker compose -f docker/docker-compose.yml logs -f"
   },
   "devDependencies": {
-    "@commitlint/cli": "^19.6.1",
-    "@commitlint/config-conventional": "^19.6.0",
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
     "husky": "^9.1.7",
-    "lint-staged": "^15.3.0",
-    "prettier": "^3.4.2",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.9",
     "rimraf": "^6.0.1",
-    "turbo": "^2.3.3",
-    "typescript": "^5.7.3"
+    "turbo": "^2.11.5",
+    "typescript": "^7.0.2"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
