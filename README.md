@@ -117,4 +117,4 @@ See [`.env.example`](./.env.example) for the full, documented variable list and
 
 ## License
 
-UNLICENSED — proprietary. © LogicRest AI.
+UNLICENSED — proprietary.
