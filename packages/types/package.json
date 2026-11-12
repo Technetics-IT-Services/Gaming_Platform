@@ -24,9 +24,9 @@
   },
   "devDependencies": {
     "@gaming-platform/config": "workspace:*",
-    "eslint": "^9.17.0",
-    "rimraf": "^6.0.1",
-    "tsup": "^8.3.5",
-    "typescript": "^5.7.3"
+    "eslint": "^10.14.0",
+    "rimraf": "^6.1.4",
+    "tsup": "^9.0.0",
+    "typescript": "^7.0.2"
   }
 }
